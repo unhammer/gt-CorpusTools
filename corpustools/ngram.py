@@ -49,19 +49,37 @@ class _NGram:
             count += 1
         self.ngramskeyset = set(ngrams.keys())
         self.ngrams = ngrams
+        self.ngrams_ranks = {
+            gram:rank
+            for rank, (gram, freq)
+            in enumerate(sorted(ngrams.iteritems(), key=lambda x:x[1]))
+        }
         return self
 
     def addValues(self, key, value):
+        # TODO: unused, remove?
         self.ngrams[key] = value
         return self
 
     def compare(self, ngram):
         settolookout = self.ngramskeyset.intersection(ngram.ngramskeyset)
         missingcount = len(self.ngramskeyset) - len(settolookout)
+        missingcount = len([x for x in ngram.ngramskeyset if x not in self.ngramskeyset])
         d = missingcount * nb_ngrams
         for k in settolookout:
-            d += (ngram.ngrams[k] - self.ngrams[k])
+            old_d = d
+            d += abs(ngram.ngrams[k] - self.ngrams[k])
+            #print "d=%d += %d gives %d (k=%s)" %(old_d, abs(ngram.ngrams[k] - self.ngrams[k]), d, k)
+        #print ""
         return d
+
+    def rank_compare(self, ngram):
+        not_found_value = nb_ngrams
+        return sum(
+            abs(rank - self.ngrams_ranks.get(gram, not_found_value))
+            for gram,rank
+            in ngram.ngrams_ranks.iteritems()
+        )
 
 
 class NGram:
@@ -112,18 +130,33 @@ class NGram:
         if not count:
             raise ValueError("no language files found")
 
+    def classify_full(self, text):
+        if len(self.ngrams) == 0:
+            return [('guess', 0)]
+        else:
+            ingram = _NGram(text)
+            return sorted(
+                [(l, compare(self.ngrams[l], ingram))
+                 for l in self.ngrams],
+                key=lambda x:x[1]
+            )
+
     def classify(self, text):
-        ngram = _NGram(text)
-        r = 'guess'
-        langs = self.ngrams.keys()
-        r = langs.pop()
-        min = self.ngrams[r].compare(ngram)
-        for lang in langs:
-            d = self.ngrams[lang].compare(ngram)
-            if d < min:
-                min = d
-                r = lang
-        return r
+        return self.classify_full(text)[0][0]
+
+    def rank_classify_full(self, text):
+        if len(self.ngrams) == 0:
+            return [('guess', 0)]
+        else:
+            ingram = _NGram(text)
+            return sorted(
+                [(l, self.ngrams[l].rank_compare(ingram))
+                 for l in self.ngrams],
+                key=lambda x:x[1]
+            )
+
+    def rank_classify(self, text):
+        return self.rank_classify_full(text)[0][0]
 
 
 class Generate:
@@ -154,10 +187,31 @@ class Generate:
                 file.write("%s\t %d\n" % (k, v))
             file.close()
 
-#ng = _NGram()
+def compare(ngram1, ngram):
+    settolookout = ngram1.ngramskeyset.intersection(ngram.ngramskeyset)
+    missingcount = len(ngram1.ngramskeyset) - len(settolookout)
+    #missingcount = len([x for x in ngram.ngramskeyset if x not in ngram1.ngramskeyset])
+    d = missingcount * nb_ngrams
+    for k in settolookout:
+        old_d = d
+        d += abs(ngram.ngrams[k] - ngram1.ngrams[k])
+        #print "d=%d += %d gives %d (k=%s)" %(old_d, abs(ngram.ngrams[k] - ngram1.ngrams[k]), d, k)
+    #print ""
+    return d
+
+        #ng = _NGram()
 #lg = NGram('/home/vsk/Desktop/Langdet/san/ngram_language/LM/')
 
 #def detectLanguage(text):
     #global lg
     #text = text.encode("ascii", "ignore")
     #return lg.classify(text)
+ng = NGram(os.path.join(os.getenv('GTHOME'), 'tools/lang-guesser/LM/'), langs=["sme", "smj"])
+ng.ngrams={'smj':new_smj_model, 'sme':new_sme_model}
+print ""
+for lang in ['smj', 'sme']:
+    lines=open('/tmp/'+lang+'.test','r').readlines()
+    res=[ng.rank_classify(line) for line in lines]
+    print "rank", lang, "correct", len([l for l in res if l==lang]), "wrong",len([l for l in res if l!=lang])
+    res=[ng.classify(line) for line in lines]
+    print "norm", lang, "correct", len([l for l in res if l==lang]), "wrong", len([l for l in res if l!=lang])
