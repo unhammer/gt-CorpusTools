@@ -2,11 +2,13 @@
 
 Corpus Tools contains tools to manipulate a corpus in different ways.
 These scripts will be installed
+
 * [ccat|CorpusTools.html#ccat]
 * [convert2xml|CorpusTools.html#convert2xml]
 * [analyse_corpus|CorpusTools.html#analyse_corpus]
 * [add_files_to_corpus|CorpusTools.html#add_files_to_corpus]
 * [parallelize|CorpusTools.html#parallelize]
+* [saami_crawler|CorpusTools.html#saami_crawler]
 
 !!Requirements
 
@@ -36,7 +38,7 @@ yaourt -S python2-pysvn
 }}}
 
 You also need to have the $GTHOME variable set to where you checked
-out https://victorio.uit.no/langtech/trunk/ 
+out https://victorio.uit.no/langtech/trunk/
 
 !!Installation
 
@@ -45,38 +47,53 @@ Install the tools for all users on a machine by writing
 
 {{{
 cd $GTHOME/tools/CorpusTools
-sudo pip-2.7 install -U --install-option="--install-scripts=/usr/local/bin" .
+sudo pip-2.7 install -U -e .
+sudo pip-2.7 uninstall -y corpustools
+sudo python2.7 setup.py install --install-scripts=/usr/local/bin
 }}}
 
-(Note the dot at the end.) The scripts will then be found in /usr/local/bin
+Note the dot at the end of the second line. The scripts will then be
+found in /usr/local/bin
 
 !To own home directory
+
 Install the tools for the current user by writing
 
 {{{
 cd $GTHOME/tools/CorpusTools
-pip-2.7 install -U --user --install-option="--install-scripts=$HOME/bin" .
+pip-2.7 install -U --user -e .
+pip-2.7 uninstall -y corpustools
+python2.7 setup.py install --user --install-scripts=$HOME/bin
 }}}
 
-(Note the dot at the end.) The scripts will then be found in ~/bin
+Note the dot at the end of the second line. The scripts will then be
+found in ~/bin
 
+(It may look a bit odd that we first install and then uninstall. The
+"setup.py" command isn't able to install all requirements, while the
+"pip" command isn't able to correctly install newer versions of
+CorpusTools without recompiling all dependencies as well.)
 
 !!Uninstalling
 
 !System wide
-{{sudo pip(-2.7) uninstall CorpusTools}}
+
+{{sudo pip(-2.7) uninstall corpustools}}
 
 will uninstall the scripts from /usr/local/bin and the python system path.
 
 
 !Remove from own home directory
-{{{pip(-2.7) uninstall CorpusTools}}}
+
+{{{
+pip(-2.7) uninstall corpustools
+}}}
 
 will uninstall the scripts from $HOME/bin and the users python path
 (pip will complain if you give it --user here; it tends to find the
 right thing to remove without it)
 
-If any dependencies were installed when you did "setup.py install",
+If any dependencies were installed when you did "install",
 you'll have to "pip uninstall" them individually.
 
 !!ccat
@@ -88,9 +105,12 @@ The basic function of ccat is to print paragraphs that have text type
 
 Typical usage is:
 
-{{{ccat -a -l sme $GTFREE/converted/sme/admin}}}
+{{{
+ccat -a -l sme $GTFREE/converted/sme/admin
+}}}
 
-This command will print all text marked in the language sme found the directory $GTFREE/converted/sme/admin and its subdirectories.
+This command will print all text marked in the language sme found the 
+directory $GTFREE/converted/sme/admin and its subdirectories.
 
 The complete help text from the program:
 
@@ -148,55 +168,77 @@ Convert original files in a corpus to giellatekno/divvun xml format.
 
 convert2xml depends on these external programs:
 
-* bible2xml.pl (found in the Divvun/Giellatekno svn)
 * pdftotext
 * wvHtml
 
+as well as various files from the Divvun/Giellatekno SVN, at least the
+following files/directories need to exist under $GTHOME:
+
+* gt/script/corpus/bible2xml.pl
+* gt/dtd
+* gt/tools/lang-guesser
 
 !Usage
 
 Convert all files in the directory $GTFREE/orig/sme and its
 subdirectories.
 
-{{{convert2xml $GTFREE/orig/sme}}}
+{{{
+convert2xml $GTFREE/orig/sme
+}}}
 
 The converted files are placed in $GTFREE/converted/sme
 with the same directory structure as that in $GTFREE/orig/sme.
 
 Convert only one file:
 
-{{{convert2xml $GTFREE/orig/sme/admin/sd/file1.html}}}
+{{{
+convert2xml $GTFREE/orig/sme/admin/sd/file1.html
+}}}
 
 The converted file is found in $GTFREE/orig/sme/admin/sd/file1.htm.xml
 
 Convert all sme files in directories ending with corpus
 
-{{{convert2xml *corpus/orig/sme}}}
+{{{
+convert2xml *corpus/orig/sme
+}}}
 
 If convert2xml is not able to convert a file these kinds of message will appear:
 
-{{{/home/boerre/Dokumenter/corpus/freecorpus/orig/eng/admin/depts/regjeringen.no/calendar-for-the-ministry-of-children-an.html_id=308}}}
+{{{
+/home/boerre/Dokumenter/corpus/freecorpus/orig/eng/admin/depts/regjeringen.no/calendar-for-the-ministry-of-children-an.html_id=308
+}}}
 
 A log file will be found in
 
-{{{/home/boerre/Dokumenter/corpus/freecorpus/orig/eng/admin/depts/regjeringen.no/calendar-for-the-ministry-of-children-an.html_id=308.log}}}
+{{{
+/home/boerre/Dokumenter/corpus/freecorpus/orig/eng/admin/depts/regjeringen.no/calendar-for-the-ministry-of-children-an.html_id=308.log
+}}}
 
 explaining what went wrong.
 
 The complete help text from the program:
-{{{
-usage: convert2xml [-h] [--serial] sources [sources ...]
 
-Convert original files to giellatekno/divvun xml.
+{{{
+usage: convert2xml [-h] [-v] [--serial] [--write-intermediate]
+                   sources [sources ...]
+
+Convert original files to giellatekno xml.
 
 positional arguments:
-  sources     The original file(s) or directory/ies where the original files
-              exist
+  sources               The original file(s) or directory/ies where the
+                        original files exist
 
 optional arguments:
-  -h, --help  show this help message and exit
-  --serial    use this for debugging the conversion process. When this
-              argument is used files will be converted one by one.
+  -h, --help            show this help message and exit
+  -v, --version         show program's version number and exit
+  --serial              use this for debugging the conversion process. When
+                        this argument is used files will be converted one by
+                        one.
+  --write-intermediate  Write the intermediate XML representation to
+                        ORIGFILE.im.xml, for debugging the XSLT. (Has no
+                        effect if the converted file already exists.)
 }}}
 
 !!analyse_corpus
@@ -215,29 +257,29 @@ analyse_corpus depends on these external programs:
 !Usage
 
 To be able to use this program you must build the fsts for the supported
-languages:
+languages (exchange "sma" with "sme, smj" ad lib):
 
-* sma
-** {{cd $GTHOME/langs/sma}}
-** make
-* sme
-** {{cd $GTHOME/gt/}}
-** {{make GTLANG=sme}}
-* smj
-** {{cd $GTHOME/langs/smj}}
-** make
+{{{
+cd $GTHOME/langs/sma
+make
+}}}
 
 Then you must convert the corpus files as explained in the [convert2xml|CorpusTools.html#convert2xml] section.
 
 When this is done you can analyse all files in the directory
-$GTFREE/converted/sme and its subdirectories by issuing this command:
-{{{analyse_corpus sme $GTFREE/converted/sme}}}
+$GTFREE/converted/sme (and sma, smj) and its subdirectories by issuing this command:
+
+{{{
+analyse_corpus sme $GTFREE/converted/sme
+}}}
 
 The analysed file will be found in {{$GTFREE/analysed/sme}}
 
 To analyse only one file, issue this command:
 
-{{{analyse_corpus --serial sme $GTFREE/converted/sme/file.html.xml}}}
+{{{
+analyse_corpus --serial sme $GTFREE/converted/sme/file.html.xml
+}}}
 
 The complete help text from the program:
 {{{
@@ -305,3 +347,63 @@ svn ci
 !!parallelize
 
 Parallelize two parallel corpus files, write the result to a .tmx file.
+
+parallelize depends on various files from the Divvun/Giellatekno SVN,
+at least the following directories need to exist in $GTHOME:
+
+* gt/langs (specifically, the abbr.txt and corr.txt files)
+* gt/common
+* gt/script
+* gt/tools/lang-guesser
+* gt/tools/alignment-tools/tca2 (must be compiled)
+
+Before running, you need to compile st/nob and gt/sme (or at least
+pilfer the abbr/corr files off someone else), and tca2 (just type "ant"
+in $GTHOME/gt/tools/alignment-tools/tca2).
+
+
+The complete help text from the program is as follows:
+{{{
+usage: parallelize [-h] [-v] -p PARALLEL_LANGUAGE input_file
+
+Sentence align two files. Input is the document containing the main language,
+and language to parallelize it with.
+
+positional arguments:
+  input_file            The input file
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --version         show program's version number and exit
+  -p PARALLEL_LANGUAGE, --parallel_language PARALLEL_LANGUAGE
+                        The language to parallelize the input document with
+}}}
+
+!!saami_crawler
+
+Add files to freecorpus from a given site.
+
+Only able to crawl www.samediggi.fi now, will collect html files only for now.
+
+Run it like this:
+
+{{{
+saami_crawler www.samediggi.fi
+}}}
+
+The complete help text from the program is as follows:
+
+{{{
+usage: saami_crawler [-h] [-v] sites [sites ...]
+
+Crawl saami sites (for now, only www.samediggi.fi).
+
+positional arguments:
+  sites          The sites to crawl
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -v, --version  show program's version number and exit
+}}}
+
+

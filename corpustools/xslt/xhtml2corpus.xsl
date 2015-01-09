@@ -68,16 +68,13 @@ xsltproc xhtml2corpus.xsl - > file.xml
                 <span><xsl:apply-templates/></span>
             </xsl:when>
             <xsl:otherwise>
-                <section>
-                    <p type="title">
-                        <xsl:value-of select="."/>
-                    </p>
-                </section>
+                <p type="title">
+                    <xsl:value-of select="."/>
+                </p>
             </xsl:otherwise>
         </xsl:choose>
     </xsl:if>
 </xsl:template>
-
 
 <xsl:template match="html:p|html:label">
     <xsl:if test="string-length(normalize-space(.)) > 1">
@@ -113,6 +110,19 @@ xsltproc xhtml2corpus.xsl - > file.xml
     <list>
         <xsl:apply-templates select="*"/>
     </list>
+</xsl:template>
+
+<xsl:template match="html:ul/html:strong">
+    <xsl:choose>
+        <xsl:when test="text()">
+            <p>
+                <xsl:apply-templates/>
+            </p>
+        </xsl:when>
+        <xsl:otherwise>
+            <xsl:apply-templates/>
+        </xsl:otherwise>
+    </xsl:choose>
 </xsl:template>
 
 <xsl:template match="html:li">
@@ -242,11 +252,22 @@ xsltproc xhtml2corpus.xsl - > file.xml
 </xsl:template>
 
 <xsl:template match="html:div/html:em|html:td/html:em">
-    <p>
-        <em>
+    <xsl:choose>
+        <xsl:when test="html:p">
             <xsl:apply-templates/>
-        </em>
-    </p>
+        </xsl:when>
+        <xsl:otherwise>
+            <p>
+                <em>
+                    <xsl:apply-templates/>
+                </em>
+            </p>
+        </xsl:otherwise>
+    </xsl:choose>
+</xsl:template>
+
+<xsl:template match="html:p/html:a/html:div">
+    <xsl:value-of select="text()"/>
 </xsl:template>
 
 <xsl:template match="html:div/html:u|html:td/html:u|html:div/html:strong|html:td/html:strong">
@@ -255,6 +276,10 @@ xsltproc xhtml2corpus.xsl - > file.xml
             <xsl:apply-templates/>
         </em>
     </p>
+</xsl:template>
+
+<xsl:template match="html:td/html:a/html:p|html:div/html:a/html:p">
+    <xsl:apply-templates />
 </xsl:template>
 
 <xsl:template match="html:address">
@@ -323,12 +348,19 @@ If it is a container it has one or more of the these tags:
 </xsl:template>
 
 <xsl:template match="html:div/html:a|html:td/html:a">
-    <p>
-        <xsl:apply-templates/>
-    </p>
+    <xsl:choose>
+        <xsl:when test="html:h2|html:div">
+            <xsl:apply-templates/>
+        </xsl:when>
+        <xsl:otherwise>
+            <p>
+                <xsl:apply-templates/>
+            </p>
+        </xsl:otherwise>
+    </xsl:choose>
 </xsl:template>
 
-<xsl:template match="html:div/text()|html:td/text()">
+<xsl:template match="html:div/text()|html:td/text()|html:div/html:abbr">
     <p>
         <xsl:value-of select="."/>
     </p>
@@ -367,6 +399,11 @@ If it is a container it has one or more of the these tags:
                     <p><xsl:apply-templates select="text()"/></p>
                 </xsl:otherwise>
             </xsl:choose>
+        </xsl:when>
+        <xsl:when test="html:a">
+            <p>
+                <xsl:apply-templates/>
+            </p>
         </xsl:when>
         <xsl:otherwise>
             <xsl:apply-templates/>
@@ -407,6 +444,10 @@ If it is a container it has one or more of the these tags:
     <xsl:apply-templates/>
 </xsl:template>
 
+<xsl:template match="html:ol/html:i">
+    <xsl:apply-templates/>
+</xsl:template>
+
 <xsl:template match="html:div/html:font|html:td/html:font">
     <p>
         <xsl:apply-templates/>
@@ -437,6 +478,12 @@ If it is a container it has one or more of the these tags:
 
 <xsl:template match="text()">
     <xsl:value-of select="normalize-space(.)"/><xsl:text> </xsl:text>
+</xsl:template>
+
+<xsl:template match="html:textarea">
+    <p>
+        <xsl:apply-templates />
+    </p>
 </xsl:template>
 
 <xsl:template match="*">

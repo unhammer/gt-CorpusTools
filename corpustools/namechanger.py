@@ -28,6 +28,7 @@ import shutil
 
 import lxml.etree as etree
 import unidecode
+import requests
 
 import argparse_version
 import versioncontrol
@@ -53,10 +54,13 @@ class NameChangerBase(object):
     def change_to_ascii(self):
         """Downcase all chars in self.oldname, replace some chars
         """
-        unwanted_chars = {u'+': '_', u' ': u'_', u'(': u'_', u')': u'_', u"'": u'_',
-                 u'–': u'-', u'?': u'_', u',': u'_', u'!': u'_', u',': u'_',
-                 u'<': u'_', u'>': u'_', u'"': u'_'}
+        unwanted_chars = {
+            u'+': '_', u' ': u'_', u'(': u'_', u')': u'_', u"'": u'_',
+            u'–': u'-', u'?': u'_', u',': u'_', u'!': u'_', u',': u'_',
+            u'<': u'_', u'>': u'_', u'"': u'_', u'&': u'_', u';': u'_',
+            u'&': u'_'}
 
+        # unidecode.unidecode makes ascii only
         newname = unicode(unidecode.unidecode(
             self.old_filename)).lower()
 
@@ -68,6 +72,7 @@ class NameChangerBase(object):
             newname = newname.replace('__', '_')
 
         return newname
+
 
 class AddFileToCorpus(NameChangerBase):
     '''Add a given file to a given corpus
@@ -83,31 +88,87 @@ class AddFileToCorpus(NameChangerBase):
     def makedirs(self):
         try:
             os.makedirs(self.new_dirname)
+            self.vcs.add_directory(self.new_dirname)
         except OSError:
             pass
+
+    def add_url_extension(self, content_type):
+        content_type_extension = {
+            'text/html': '.html',
+            'application/msword': '.doc',
+            'application/pdf': '.pdf',
+            'text/plain': '.txt',
+        }
+
+        for ct, extension in content_type_extension.items():
+            if (ct in content_type and not
+                    self.new_filename.endswith(extension)):
+                self.new_filename += extension
+
+    def toname(self):
+        return os.path.join(self.new_dirname, self.new_filename)
 
     def copy_orig_to_corpus(self):
         '''Copy the original file to the correct place in the given corpus
         '''
         fromname = os.path.join(self.old_dirname, self.old_filename)
-        toname = os.path.join(self.new_dirname, self.new_filename)
         self.makedirs()
 
-        print 'Copying', fromname, 'to', toname
-        shutil.copy(fromname, toname)
-        self.vcs.add(toname)
+        if fromname.startswith('http'):
+            try:
+                r = requests.get(fromname)
+                if r.status_code == requests.codes.ok:
+                    self.add_url_extension(r.headers['content-type'])
+                    if not os.path.exists(self.toname()):
+                        with open(self.toname(), 'wb') as new_corpus_file:
+                            new_corpus_file.write(r.content)
+                        print self.toname()
+                        self.vcs.add(self.toname())
+                    else:
+                        print >>sys.stderr, self.toname(), 'already exists'
+                else:
+                    print >>sys.stderr
+                    print >>sys.stderr, 'ERROR:', fromname, 'does not exist'
+                    print >>sys.stderr
+                    raise UserWarning
+            except requests.exceptions.MissingSchema:
+                print >>sys.stderr, 'Error: wrong schema'
+                raise UserWarning
+            except requests.exceptions.ConnectionError as e:
+                print >>sys.stderr, 'Could not connect'
+                print >>sys.stderr, str(e)
+                raise UserWarning
+        else:
+            shutil.copy(fromname, self.toname())
+            print self.toname()
+            self.vcs.add(self.toname())
 
-    def make_metadata_file(self):
-        metadata_file = xslsetter.MetadataHandler(
-            os.path.join(self.new_dirname,
-                         self.new_filename + '.xsl'))
-        metadata_file.set_variable('filename', self.old_filename)
-        metadata_file.set_variable('genre', self.path.split('/')[0])
-        metadata_file.set_variable('mainlang', self.mainlang)
+    def make_metadata_file(self, extra_values):
+        '''extra_values is a dict that contains data for the metadata file
+        that is not possible to infer from the data given in the constructor.
+        '''
+        metafile_name = self.toname() + '.xsl'
+        if not os.path.exists(metafile_name):
+            metadata_file = xslsetter.MetadataHandler(metafile_name)
+            if self.old_dirname.startswith('http'):
+                metadata_file.set_variable('filename', os.path.join(
+                    self.old_dirname, self.old_filename))
+            else:
+                metadata_file.set_variable('filename', self.old_filename)
+            metadata_file.set_variable('genre', self.path.split('/')[0])
+            metadata_file.set_variable('mainlang', self.mainlang)
+            metadata_file.set_variable('sub_name',
+                                       self.vcs.user_name().decode('utf-8'))
+            metadata_file.set_variable('sub_email', self.vcs.user_email())
 
-        print 'Making metadata file', metadata_file.filename
-        metadata_file.write_file()
-        self.vcs.add(metadata_file.filename)
+            for key, value in extra_values.items():
+                metadata_file.set_variable(key, value)
+
+            print metadata_file.filename
+            metadata_file.write_file()
+            self.vcs.add(metadata_file.filename)
+        else:
+            print >>sys.stderr, metafile_name, 'already exists'
 
 
 class CorpusNameFixer(NameChangerBase):
@@ -129,8 +190,11 @@ class CorpusNameFixer(NameChangerBase):
                 self.move_prestable_toktmx()
                 self.move_prestable_tmx()
             else:
-                print >>sys.stderr, 'Error renaming', os.path.join(self.old_dirname, self.old_filename)
-                print >>sys.stderr, fullname, 'exists'
+                print >>sys.stderr, (
+                    '\nError renaming {}'
+                    '\n{} exists\n'.format(
+                        os.path.join(self.old_dirname, self.old_filename),
+                        fullname))
 
     def move_file(self, oldname, newname):
         """Change name of file from fromname to toname"""
@@ -152,8 +216,10 @@ class CorpusNameFixer(NameChangerBase):
         """Change the name of an xsl file using the
         routines of a given repository tool
         """
-        fromname = os.path.join(self.old_dirname, self.old_filename + '.xsl')
-        toname = os.path.join(self.old_dirname, self.new_filename + '.xsl')
+        fromname = os.path.join(self.old_dirname,
+                                '{}.xsl'.format(self.old_filename))
+        toname = os.path.join(self.old_dirname,
+                              '{}.xsl'.format(self.new_filename))
 
         if os.path.exists(fromname):
             self.move_file(fromname, toname)
@@ -163,7 +229,7 @@ class CorpusNameFixer(NameChangerBase):
         try:
             tree = etree.parse(xslfile)
         except Exception, inst:
-            print "Unexpected error opening %s: %s" % (xslfile, inst)
+            print "Unexpected error opening {}: {}".format(xslfile, inst)
             sys.exit(254)
 
         return tree
@@ -172,13 +238,13 @@ class CorpusNameFixer(NameChangerBase):
         """
         """
         paradir = self.old_dirname.replace(mainlang, paralang)
-        parafile = os.path.join(paradir, paraname + '.xsl')
+        parafile = os.path.join(paradir, '{}.xsl'.format(paraname))
         if os.path.exists(parafile):
             paratree = self.open_xslfile(parafile)
             pararoot = paratree.getroot()
 
-            pararoot.find(".//*[@name='para_" + mainlang + "']").set(
-                'select', "'" + self.new_filename + "'")
+            pararoot.find(".//*[@name='para_{}']".format(mainlang)).set(
+                'select', "'{}'".format(self.new_filename))
 
             paratree.write(parafile, encoding='utf8', xml_declaration=True)
 
@@ -188,7 +254,8 @@ class CorpusNameFixer(NameChangerBase):
         Open the xsl files of these parallel files and change the name of this
         parallel from the old to the new one
         """
-        xslfile = os.path.join(self.old_dirname, self.new_filename + '.xsl')
+        xslfile = os.path.join(self.old_dirname,
+                               '{}.xsl'.format(self.new_filename))
         if os.path.exists(xslfile):
             xsltree = self.open_xslfile(xslfile)
             xslroot = xsltree.getroot()
@@ -211,8 +278,8 @@ class CorpusNameFixer(NameChangerBase):
         """Move the file in prestable/converted from the old to the new name
         """
         dirname = self.old_dirname.replace('/orig/', '/prestable/converted/')
-        fromname = os.path.join(dirname, self.old_filename + '.xml')
-        toname = os.path.join(dirname, self.new_filename + '.xml')
+        fromname = os.path.join(dirname, '{}.xml'.format(self.old_filename))
+        toname = os.path.join(dirname, '{}.xml'.format(self.new_filename))
 
         if os.path.exists(fromname):
             self.move_file(fromname, toname)
@@ -223,9 +290,11 @@ class CorpusNameFixer(NameChangerBase):
         for suggestion in ['/prestable/toktmx/sme2nob/',
                            '/prestable/toktmx/nob2sme/']:
             dirname = self.old_dirname.replace('/orig/', suggestion)
-            fromname = os.path.join(dirname, self.old_filename + '.toktmx')
+            fromname = os.path.join(dirname, '{}.toktmx'.format(
+                self.old_filename))
             if os.path.exists(fromname):
-                toname = os.path.join(dirname, self.new_filename + '.toktmx')
+                toname = os.path.join(dirname, '{}.toktmx'.format(
+                    self.new_filename))
                 self.move_file(fromname, toname)
 
     def move_prestable_tmx(self):
@@ -234,9 +303,11 @@ class CorpusNameFixer(NameChangerBase):
         for suggestion in ['/prestable/tmx/sme2nob/',
                            '/prestable/tmx/nob2sme/']:
             dirname = self.old_dirname.replace('/orig/', suggestion)
-            fromname = os.path.join(dirname, self.old_filename + '.tmx')
+            fromname = os.path.join(dirname, '{}.tmx'.format(
+                self.old_filename))
             if os.path.exists(fromname):
-                toname = os.path.join(dirname, self.new_filename + '.tmx')
+                toname = os.path.join(dirname, '{}.tmx'.format(
+                    self.new_filename))
                 self.move_file(fromname, toname)
 
 
@@ -260,6 +331,7 @@ def parse_args():
 
     return parser.parse_args()
 
+
 def main():
     args = parse_args()
 
@@ -281,19 +353,26 @@ def gather_files(origs):
                     file_list.append(name_to_unicode(os.path.join(root, f)))
         elif os.path.isfile(orig):
             file_list.append(name_to_unicode(orig))
+        elif orig.startswith('http'):
+            file_list.append(name_to_unicode(orig))
+        else:
+            print >>sys.stderr, (
+                'ERROR: {} is neither a directory, nor a file nor a '
+                'http-url\n'.format(orig))
+            raise UserWarning
 
     return file_list
 
 
 def add_files(args):
-    for file_ in gather_files(args.origs):
+    for orig in gather_files(args.origs):
         adder = AddFileToCorpus(
-            file_,
+            orig,
             args.corpusdir,
             args.mainlang,
             args.path)
         adder.copy_orig_to_corpus()
-        adder.make_metadata_file()
+        adder.make_metadata_file({})
 
 
 def parse_options():
@@ -315,7 +394,7 @@ def parse_options():
                         admin/facta/skuvlahistorja1')
     parser.add_argument('origs',
                         nargs='+',
-                        help='The original files or directories where the \
+                        help='The original files, urls or directories where the \
                         original files reside (not in svn)')
 
     return parser.parse_args()
@@ -330,6 +409,7 @@ def adder_main():
         except UserWarning:
             pass
     else:
+        print >>sys.stderr, 'ERROR'
         print >>sys.stderr, 'The given corpus directory,',
         print >>sys.stderr, args.corpusdir,
         print >>sys.stderr, 'does not exist'

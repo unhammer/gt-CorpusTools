@@ -25,52 +25,69 @@ import sys
 import re
 import io
 import subprocess
-import HTMLParser
 from copy import deepcopy
 import distutils.dep_util
+import distutils.spawn
 import codecs
 import multiprocessing
 import argparse
 import tempfile
 from pkg_resources import resource_string, resource_filename
 
-import bs4
 import lxml.etree as etree
-import tidylib
+import lxml.html.clean as clean
+from lxml.html import html5parser
 from pyth.plugins.rtf15.reader import Rtf15Reader
 from pyth.plugins.xhtml.writer import XHTMLWriter
 from pydocx.parsers import Docx2Html
 
 import decode
-import ngram
+import text_cat
 import errormarkup
 import ccat
-import analyser
 import argparse_version
 import functools
+import util
+
+
+here = os.path.dirname(__file__)
 
 
 class ConversionException(Exception):
-    def __init__(self, value):
-        self.parameter = value
+    pass
 
-    def __str__(self):
-        return repr(self.parameter)
+
+def run_process(command, orig, to_stdin=None):
+    subp = subprocess.Popen(command,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    (output, error) = subp.communicate(to_stdin)
+
+    if subp.returncode != 0:
+        logfile = open('{}.log'.format(orig), 'w')
+        print >>logfile, 'stdout\n{}\n'.format(output)
+        print >>logfile, 'stderr\n{}\n'.format(error)
+        logfile.close()
+        raise ConversionException("{} failed. \
+            More info in the log file: {}.log".format((command[0]), orig))
+    else:
+        return output
 
 
 class Converter(object):
     """
     Class to take care of data common to all Converter classes
     """
-    def __init__(self, filename, write_intermediate=False, test=False):
+    def __init__(self, filename, languageGuesser, write_intermediate=False, test=False):
         self.orig = os.path.abspath(filename)
         self.set_corpusdir()
         self.set_converted_name()
         self.dependencies = [self.get_orig(), self.get_xsl()]
         self.fix_lang_genre_xsl()
         self._write_intermediate = write_intermediate
+        self.languageGuesser = languageGuesser
 
-    def make_intermediate(self):
+    def make_intermediate(self, encoding_from_xsl):
         """Convert the input file from the original format to a basic
         giellatekno xml document
         """
@@ -87,7 +104,7 @@ class Converter(object):
             intermediate = SVGConverter(self.orig)
 
         elif '.htm' in self.orig or '.php' in self.orig:
-            intermediate = HTMLConverter(self.orig)
+            intermediate = HTMLConverter(self.orig, encoding_from_xsl)
 
         elif self.orig.endswith('.doc') or self.orig.endswith('.DOC'):
             intermediate = DocConverter(self.orig)
@@ -102,7 +119,10 @@ class Converter(object):
             intermediate = BiblexmlConverter(self.orig)
 
         else:
-            raise ConversionException("Not able to convert " + self.orig)
+            raise ConversionException(
+                "Unknown file extension, not able to convert {} "
+                "\nHint: you may just have to rename the file".format(
+                    self.orig))
 
         document = intermediate.convert2intermediate()
 
@@ -121,10 +141,10 @@ class Converter(object):
         dtd = etree.DTD(Converter.get_dtd_location())
 
         if not dtd.validate(complete):
-            #print etree.tostring(complete)
-            logfile = open(self.get_orig() + '.log', 'w')
+            # print etree.tostring(complete)
+            logfile = open('{}.log'.format(self.get_orig()), 'w')
 
-            logfile.write('Error at: ' + str(ccat.lineno()))
+            logfile.write('Error at: {}'.format(str(ccat.lineno())))
             for entry in dtd.error_log:
                 logfile.write('\n')
                 logfile.write(str(entry))
@@ -136,37 +156,48 @@ class Converter(object):
             logfile.close()
 
             raise ConversionException(
-                "Not valid XML. More info in the log file: " +
-                self.get_orig() + u".log")
+                "Not valid XML. More info in the log file: {}.log".format(self.get_orig()))
 
     def maybe_write_intermediate(self, intermediate):
         if not self._write_intermediate:
             return
-        assert(self.get_converted_name().endswith('.xml'))
-        im_name = self.get_converted_name()[:-4] + '.im.xml'
+        im_name = self.orig + '.im.xml'
         with open(im_name, 'w') as im_file:
             im_file.write(etree.tostring(intermediate,
                                          encoding='utf8',
                                          pretty_print='True'))
 
+    def encoding_from_xsl(self, xsl):
+        encoding_elt = xsl.find(
+            '//xsl:variable[@name="text_encoding"]',
+            namespaces={'xsl': 'http://www.w3.org/1999/XSL/Transform'})
+
+        if encoding_elt is not None:
+            return encoding_elt.attrib.get("select", "''").strip("'")
+        else:
+            return None
+
     def transform_to_complete(self):
         xm = XslMaker(self.get_xsl())
-        intermediate = self.make_intermediate()
+        intermediate = self.make_intermediate(
+            self.encoding_from_xsl(xm.finalXsl))
         self.maybe_write_intermediate(intermediate)
 
         try:
             complete = xm.get_transformer()(intermediate)
+
             return complete
         except etree.XSLTApplyError as (e):
-            logfile = open(self.orig + '.log', 'w')
+            logfile = open('{}.log'.format(self.orig), 'w')
 
-            logfile.write('Error at: ' + str(ccat.lineno()))
+            logfile.write('Error at: {}'.format(str(ccat.lineno())))
             for entry in e.error_log:
                 logfile.write(str(entry))
                 logfile.write('\n')
 
             logfile.close()
-            raise ConversionException("Check the syntax in: " + self.get_xsl())
+            raise ConversionException("Check the syntax in: {}".format(
+                self.get_xsl()))
 
     def convert_errormarkup(self, complete):
         if 'correct.' in self.orig:
@@ -176,8 +207,8 @@ class Converter(object):
                 for element in complete.find('body'):
                     em.add_error_markup(element)
             except IndexError as e:
-                logfile = open(self.get_orig() + '.log', 'w')
-                logfile.write('Error at: ' + str(ccat.lineno()))
+                logfile = open('{}.log'.format(self.get_orig()), 'w')
+                logfile.write('Error at: {}'.format(str(ccat.lineno())))
                 logfile.write("There is a markup error\n")
                 logfile.write("The error message: ")
                 logfile.write(str(e))
@@ -217,7 +248,7 @@ class Converter(object):
         self.validate_complete(complete)
         self.convert_errormarkup(complete)
         complete = self.fix_document(complete)
-        ld = LanguageDetector(complete)
+        ld = LanguageDetector(complete, self.languageGuesser)
         ld.detect_language()
 
         return complete
@@ -260,7 +291,10 @@ class Converter(object):
         return self.orig + '.xsl'
 
     def get_tmpdir(self):
-        return os.path.join(self.get_corpusdir(), 'tmp')
+        if self.get_corpusdir() == os.path.dirname(self.orig):
+            return self.get_corpusdir()
+        else:
+            return os.path.join(self.get_corpusdir(), 'tmp')
 
     def get_corpusdir(self):
         return self.corpusdir
@@ -270,7 +304,7 @@ class Converter(object):
         if orig_pos != -1:
             self.corpusdir = os.path.dirname(self.orig[:orig_pos])
         else:
-            self.corpusdir = os.getcwd()
+            self.corpusdir = os.path.dirname(self.orig)
 
     def fix_lang_genre_xsl(self):
         """Set the mainlang and genre variables in the xsl file, if possible
@@ -313,9 +347,9 @@ class Converter(object):
                         self.get_xsl(), encoding="utf-8", xml_declaration=True)
 
         except etree.XMLSyntaxError as e:
-            logfile = open(self.orig + '.log', 'w')
+            logfile = open('{}.log'.format(self.orig), 'w')
 
-            logfile.write('Error at: ' + str(ccat.lineno()))
+            logfile.write('Error at: {}'.format(str(ccat.lineno())))
             for entry in e.error_log:
                 logfile.write('\n')
                 logfile.write(str(entry.line))
@@ -329,25 +363,20 @@ class Converter(object):
                     logfile.write(entry.message.encode('latin1'))
 
                 logfile.write('\n')
-                logfile.close()
-                raise ConversionException(
-                    u"XML syntax error. More info in the log file: " +
-                    self.get_orig() + u".log")
+            logfile.close()
+            raise ConversionException(
+                u"XSL syntax error. More info in the log file: " +
+                self.orig + u".log")
 
     def set_converted_name(self):
         """Set the name of the converted file
         """
-        converted_basename = os.path.join(self.get_corpusdir(), 'converted')
-        origname = self.get_orig().replace(self.get_corpusdir(), '')
-        if origname.startswith('/'):
-            origname = origname[1:]
-        if origname.startswith('orig/'):
-            origname = origname.replace('orig/', '')
+        orig_pos = self.orig.find('orig/')
+        if orig_pos != -1:
+            self._convertedName = self.orig.replace(
+                '/orig/', '/converted/') + '.xml'
         else:
-            origname = os.path.basename(origname)
-
-        self._convertedName = os.path.join(converted_basename,
-                                           origname) + '.xml'
+            self._convertedName = self.orig + '.xml'
 
     def get_converted_name(self):
         return self._convertedName
@@ -517,7 +546,7 @@ class PlaintextConverter(object):
         content = content.replace(u'<0x2003>', u' ')
 
         remove_re = re.compile(
-            u'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F%s]' % extra)
+            u'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F{}]'.format(extra))
         content, count = remove_re.subn('', content)
 
         return content
@@ -579,15 +608,6 @@ class PlaintextConverter(object):
         return document
 
 
-#from pdfminer.pdfparser import PDFDocument, PDFParser
-#from pdfminer.pdfinterp import PDFResourceManager, \
-    #PDFPageInterpreter, process_pdf
-#from pdfminer.pdfdevice import PDFDevice, TagExtractor
-#from pdfminer.converter import TextConverter
-#from pdfminer.cmapdb import CMapDB
-#from pdfminer.layout import LAParams
-
-
 class PDFConverter(object):
     def __init__(self, filename):
         self.orig = filename
@@ -620,7 +640,6 @@ class PDFConverter(object):
         }
 
         for key, value in replacements.items():
-            #print '583', key, value
             self.text = self.text.replace(key + ' ', value)
             self.text = self.text.replace(key, value)
 
@@ -629,71 +648,20 @@ class PDFConverter(object):
         Extract the text from the pdf file using pdftotext
         output contains string from the program and is a utf-8 string
         """
-        subp = subprocess.Popen(
-            ['pdftotext', '-enc', 'UTF-8', '-nopgbrk', '-eol',
-             'unix', self.orig, '-'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
-        (output, error) = subp.communicate()
-
-        if subp.returncode != 0:
-            logfile = open(self.orig + '.log', 'w')
-            logfile.write('Error at: ' + str(ccat.lineno()))
-            logfile.write('stdout\n')
-            logfile.write(output)
-            logfile.write('\n')
-            logfile.write('stderr\n')
-            logfile.write(error)
-            logfile.write('\n')
-            logfile.close()
-            raise ConversionException("Could not extract text from pdf. \
-                More info in the log file: " + self.orig + u".log")
+        command = ['pdftotext', '-enc', 'UTF-8', '-nopgbrk', '-eol',
+                   'unix', self.orig, '-']
+        output = run_process(command, self.orig)
 
         self.text = unicode(output, encoding='utf8')
         self.replace_ligatures()
         return self.strip_chars(self.text)
 
     def strip_chars(self, content, extra=u''):
-        remove_re = re.compile(u'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F%s]' % extra)
+        remove_re = re.compile(u'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F{}]'.format(
+            extra))
         content, count = remove_re.subn('', content)
 
         return content
-
-    #def extract_text1(self):
-        ## debug option
-        #debug = 0
-        ## input option
-        #pagenos = set()
-        #maxpages = 0
-        ## output option
-        #codec = 'utf-8'
-        #caching = True
-        #laparams = LAParams()
-
-        #PDFDocument.debug = debug
-        #PDFParser.debug = debug
-        #CMapDB.debug = debug
-        #PDFResourceManager.debug = debug
-        #PDFPageInterpreter.debug = debug
-        #PDFDevice.debug = debug
-        ##
-        #rsrcmgr = PDFResourceManager(caching=caching)
-
-        #outfp = cStringIO.StringIO()
-
-        #device = TextConverter(rsrcmgr, outfp, codec=codec, laparams=laparams)
-
-        #fp = file(self.orig, 'rb')
-        #process_pdf(rsrcmgr, device, fp, pagenos, maxpages=maxpages,
-                    #caching=caching, check_extractable=True)
-        #fp.close()
-
-        #device.close()
-        #self.text = unicode(outfp.getvalue(), encoding='utf8')
-        #self.replace_ligatures()
-        #outfp.close()
-
-        #return self.text
 
     def convert2intermediate(self):
         document = etree.Element('document')
@@ -772,9 +740,11 @@ class PDF2XMLConverter(object):
                 elif int(page_number) % 2 == 1 and m.get('odd') is not None:
                     margins[margin] = m['odd']
                 else:
-                    margins[margin] = self.compute_margin(margin, page_height, page_width)
+                    margins[margin] = self.compute_margin(margin, page_height,
+                                                          page_width)
             else:
-                margins[margin] = self.compute_margin(margin, page_height, page_width)
+                margins[margin] = self.compute_margin(margin, page_height,
+                                                      page_width)
 
         return margins
 
@@ -791,7 +761,7 @@ class PDF2XMLConverter(object):
         if margin == 'bm':
             return int(page_height - default * page_height)
 
-        return margins
+        return margin
 
     def append_to_body(self, element):
         self.body.append(element)
@@ -818,11 +788,13 @@ class PDF2XMLConverter(object):
                 if len(self.parts) > 0:
                     if isinstance(self.parts[-1], etree._Element):
                         if self.parts[-1].tail is not None:
-                            self.parts[-1].tail += ' ' + textelement.text
+                            self.parts[-1].tail += ' {}'.format(
+                                textelement.text)
                         else:
                             self.parts[-1].tail = textelement.text
                     else:
-                        self.parts[-1] += ' ' + textelement.text
+                        self.parts[-1] += u' {}'.format(
+                            unicode(textelement.text))
                 else:
                     m = re.search('\w-$', textelement.text, re.UNICODE)
                     if m:
@@ -830,7 +802,6 @@ class PDF2XMLConverter(object):
                         self.parts.append(etree.Element('hyph'))
                     else:
                         self.parts.append(textelement.text)
-
 
             for child in textelement:
                 em = etree.Element('em')
@@ -882,7 +853,7 @@ class PDF2XMLConverter(object):
         delta = float(text2.get('top')) - float(text1.get('top'))
         ratio = 1.5
 
-        if ( f1 == f2 and h1 == h2 and delta < ratio * h1):
+        if (f1 == f2 and h1 == h2 and delta < ratio * h1):
             result = True
 
         return result
@@ -910,8 +881,10 @@ class PDF2XMLConverter(object):
 
         t is a text element
         '''
-        return (int(t.get('top')) > margins['tm'] and int(t.get('top')) < margins['bm'] and
-                int(t.get('left')) > margins['rm'] and int(t.get('left')) < margins['lm'])
+        return (int(t.get('top')) > margins['tm'] and
+                int(t.get('top')) < margins['bm'] and
+                int(t.get('left')) > margins['rm'] and
+                int(t.get('left')) < margins['lm'])
 
     def parse_pages(self, root_element):
         for page in root_element.iter('page'):
@@ -927,15 +900,18 @@ class PDF2XMLConverter(object):
         if len(self.parts) > 0:
             p = etree.Element('p')
             print ccat.lineno(), self.parts[0], self.parts, type(self.parts[0])
-            if (isinstance(self.parts[0], str) or isinstance(self.parts[0], unicode)):
+            if (isinstance(self.parts[0], str) or
+                    isinstance(self.parts[0], unicode)):
                 p.text = self.parts[0]
             else:
                 p.append(self.parts[0])
 
             for part in self.parts[1:]:
                 if isinstance(part, etree._Element):
-                    if len(p) > 0 and len(p[-1]) > 0 and p[-1][-1].tag == 'hyph':
-                        if p[-1].tag == part.tag and p[-1].get('type') == part.get('type'):
+                    if (len(p) > 0 and len(p[-1]) > 0 and
+                            p[-1][-1].tag == 'hyph'):
+                        if (p[-1].tag == part.tag and
+                                p[-1].get('type') == part.get('type')):
                             p[-1][-1].tail = part.text
                             p[-1].tail = part.tail
                         else:
@@ -946,9 +922,10 @@ class PDF2XMLConverter(object):
                     if p[-1].tail is None:
                         p[-1].tail = part
                     else:
-                        p[-1].tail = ' ' + part
+                        p[-1].tail = ' {}'.format(part)
 
             return p
+
 
 class BiblexmlConverter(object):
     """
@@ -962,17 +939,13 @@ class BiblexmlConverter(object):
         Convert the bible xml to giellatekno xml format using bible2xml.pl
         """
         (tmpfile, tmpname) = tempfile.mkstemp()
-        subp = subprocess.Popen(
-            ['bible2xml.pl', '-out', tmpname, self.orig],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
-        (output, error) = subp.communicate()
+        bible2xmlpl = 'bible2xml.pl'
+        if distutils.spawn.find_executable(bible2xmlpl) is None:
+            raise ConversionException(
+                "Could not find {} in $PATH".format(bible2xmlpl))
 
-        if subp.returncode != 0:
-            print >>sys.stderr, 'Could not process', self.orig
-            print >>sys.stderr, output
-            print >>sys.stderr, error
-            return subp.returncode
+        command = [bible2xmlpl, '-out', tmpname, self.orig]
+        run_process(command, self.orig)
 
         return etree.parse(tmpname)
 
@@ -983,23 +956,88 @@ class HTMLContentConverter(object):
 
     content is a string
     """
-    def __init__(self, filename, content):
+    def __init__(self, filename, content, encoding_from_xsl):
+        '''Clean up content, then convert it to xhtml using html5parser
+        '''
         self.orig = filename
 
+        # remove cruft from svenskakyrkan.se documents
+        content = content.replace('//<script', '<script')
+        content = content.replace('&nbsp;', ' ')
+
+        cleaner = clean.Cleaner(
+            page_structure=False,
+            scripts=True,
+            javascript=True,
+            comments=True,
+            style=True,
+            processing_instructions=True,
+            remove_unknown_tags=True,
+            embedded=True,
+            remove_tags=['img', 'area', 'hr', 'cite', 'footer', 'figcaption',
+                         'aside', 'time', 'figure', 'nav', 'noscript', 'map',
+                         'ins',
+                         ])
+
         try:
-            self.soup = bs4.BeautifulSoup(content, 'lxml')
-        except HTMLParser.HTMLParseError:
-            raise ConversionException("BeautifulSoup couldn't parse the html")
+            enc = self.set_charset(content, encoding_from_xsl)
+            c = unicode(content, encoding=enc)
+            superclean = cleaner.clean_html(c)
+        except UnicodeDecodeError as e:
+            logfile = open('{}.log'.format(self.orig), 'w')
+            print >>logfile, ccat.lineno(), str(e), self.orig
+            logfile.close()
+            raise ConversionException('{}, ny encoding tull1'.format(
+                self.orig))
+        except TypeError as e:
+            logfile = open('{}.log'.format(self.orig), 'w')
+            print >>logfile, ccat.lineno(), str(e), self.orig
+            logfile.close()
+            raise ConversionException('{}, ny encoding tull2'.format(
+                self.orig))
+        except ValueError as e:
+            logfile = open('{}.log'.format(self.orig), 'w')
+            print >>logfile, ccat.lineno(), str(e), self.orig
+            logfile.close()
+            raise ConversionException('{}, ny encoding tull3'.format(
+                self.orig))
+
+        self.soup = html5parser.document_fromstring(superclean)
 
         self.converter_xsl = resource_string(__name__, 'xslt/xhtml2corpus.xsl')
+
+    def set_charset(self, content, encoding_from_xsl):
+        charset = 'utf-8'
+
+        if encoding_from_xsl == '' or encoding_from_xsl is None:
+            cg = content.find('charset=')
+            if cg > 0:
+                f1 = cg + content[cg:].find('"')
+                f2 = cg + content[cg:].find("'")
+
+                if f1 < cg and f2 > cg:
+                    charset = content[cg + len('charset='):f2].lower()
+                elif f2 < cg and f1 > cg:
+                    charset = content[cg + len('charset='):f1].lower()
+                elif f1 > cg and f2 > cg:
+                    if f1 < f2:
+                        charset = content[cg + len('charset='):f1].lower()
+                    else:
+                        charset = content[cg + len('charset='):f2].lower()
+        else:
+            charset = encoding_from_xsl.lower()
+
+        if charset == 'iso-8859-1' or charset == 'ascii':
+            return 'windows-1252'
+        else:
+            return charset
 
     def remove_empty_class(self):
         """Some documents have empty class attributes.
         Delete these attributes.
         """
-        for tag in self.soup.find_all(True):
-            if tag.has_attr('class') and tag['class'] == ['']:
-                del tag['class']
+        for element in self.soup.xpath('.//*[@class=""]'):
+            del element.attrib['class']
 
     def remove_elements(self):
         '''Remove unwanted tags from a html document
@@ -1007,37 +1045,36 @@ class HTMLContentConverter(object):
         The point with this exercise is to remove all but the main content of
         the document.
         '''
-        for instance in [
-                bs4.Comment, bs4.ProcessingInstruction, bs4.Declaration]:
-            [unwanted.extract() for unwanted in self.soup.find_all(
-                text=lambda text: isinstance(text, instance))]
-
-        remove_tags = [
-            'script', 'style', 'o:p', 'st1:country-region', 'v:shapetype',
-            'v:shape', 'st1:metricconverter', 'area', 'object', 'meta',
-            'fb:like', 'fb:comments', 'g:plusone', 'hr', 'nf', 'mb', 'ms',
-            'img', 'cite', 'embed', 'footer', 'figcaption', 'aside', 'time',
-            'figure', 'nav', 'select', 'noscript', 'iframe', 'map', 'img',
-            'colgroup']
-
-        for remove_tag in remove_tags:
-            [remove.decompose() for remove in self.soup.find_all(remove_tag)]
-
         unwanted_classes_ids = {
             'div': {
                 'class': [
                     'QuickNav', 'tabbedmenu', 'printContact', 'documentPaging',
-                    'breadcrumbs', 'post-footer', 'documentInfoEm',
+                    'breadcrumbs',
+                    'breadcrumbs ', # regjeringen.no
+                    'post-footer', 'documentInfoEm',
                     'article-column', 'nrk-globalfooter', 'article-related',
                     'outer-column', 'article-ad', 'article-bottom-element',
                     'banner-element', 'nrk-globalnavigation', 'sharing', 'ad',
                     'meta', 'authors', 'articleImageRig',  'btm_menu',
                     'expandable', 'toc', 'titlepage',
-                    'container_full',],
+                    'container_full', 'moduletable_oikopolut',
+                    "latestnews_uutisarkisto", 'back_button',
+                    'breadcrums span-12',       # svenskakyrkan.se
+                    'tipsarad mt6 selfClear',   # svenskakyrkan.se
+                    'imagecontainer',           # regjeringen.no
+                    ],
                 'id': [
+                    'pageFooter',               # svenskakyrkan.se
+                    'headerBar',                # svenskakyrkan.se
+                    'leftmenu',                 # svenskakyrkan.se
+                    'rightside',                # svenskakyrkan.se
+                    'readspeaker_button1',      # svenskakyrkan.se
                     'searchBox',
+                    'murupolku',                # www.samediggi.fi
+                    'main_navi_main',           # www.samediggi.fi
                     'ctl00_FullRegion_CenterAndRightRegion_Sorting_sortByDiv',
-                    'ctl00_FullRegion_CenterAndRightRegion_HitsControl_searchHitSummary',
+                    'ctl00_FullRegion_CenterAndRightRegion_HitsControl_'
+                    'searchHitSummary',
                     'AreaTopSiteNav', 'SamiDisclaimer', 'AreaTopRight',
                     'AreaLeft', 'AreaRight', 'ShareArticle', 'tipafriend',
                     'AreaLeftNav', 'PageFooter', 'blog-pager',
@@ -1053,7 +1090,8 @@ class HTMLContentConverter(object):
                     'topMenu',
                     'article_footer',
                     'rightCol',
-                    'PrintDocHead',],
+                    'PrintDocHead',
+                    ],
                 },
             'p': {
                 'class': ['WebPartReadMoreParagraph', 'breadcrumbs'],
@@ -1064,78 +1102,106 @@ class HTMLContentConverter(object):
                 },
             'span': {
                 'id': ['skiplinks'],
-                'class': ['K-NOTE-FOTNOTE']
+                'class': [
+                    'K-NOTE-FOTNOTE',
+                    'graytext',     # svenskakyrkan.se
+                    ],
                 },
             'a': {
-                'id': ['leftPanelTab',]
+                'id': ['leftPanelTab', ],
+                'class': [
+                    'mainlevel',
+                    ],
+                },
+            'td': {
+                'id': ["paavalikko_linkit", "hakulomake", 'sg_oikea'],
+                'class': ["modifydate"],
+                },
+            'tr': {
+                'id': ["sg_ylaosa1", "sg_ylaosa2"]
                 },
             }
 
+        ns = {'html': 'http://www.w3.org/1999/xhtml'}
         for tag, attribs in unwanted_classes_ids.items():
             for key, values in attribs.items():
                 for value in values:
-                    [remove.decompose()
-                     for remove in self.soup.find_all(tag, {key: value})]
+                    search = ('.//html:{}[@{}="{}"]'.format(tag, key, value))
+                    for unwanted in self.soup.xpath(search, namespaces=ns):
+                        #print '---------------------------------------'
+                        #print ccat.lineno(), etree.tostring(unwanted)
+                        #print '---------------------------------------'
+                        unwanted.getparent().remove(unwanted)
+
+    def add_p_around_text(self):
+        '''Add p around text after an hX element
+        '''
+        for h in self.soup.xpath(
+                './/html:body/*',
+                namespaces={'html': 'http://www.w3.org/1999/xhtml'}):
+            if h.tail is not None and h.tail.strip() != '':
+                p = etree.Element('{http://www.w3.org/1999/xhtml}p')
+                p.text = h.tail
+                h.tail = None
+                n = h.getnext()
+                while n is not None:
+                    if (n.tag == '{http://www.w3.org/1999/xhtml}p' or
+                            n.tag == '{http://www.w3.org/1999/xhtml}h3' or
+                            n.tag == '{http://www.w3.org/1999/xhtml}h2' or
+                            n.tag == '{http://www.w3.org/1999/xhtml}div' or
+                            n.tag == '{http://www.w3.org/1999/xhtml}table'):
+                        break
+                    p.append(n)
+                    n = n.getnext()
+
+                h_parent = h.getparent()
+                h_parent.insert(h_parent.index(h) + 1, p)
+
+    def center2div(self):
+        '''Convert center to div in tidy style
+        '''
+        for center in self.soup.xpath(
+                './/html:center',
+                namespaces={'html': 'http://www.w3.org/1999/xhtml'}):
+            center.tag = '{http://www.w3.org/1999/xhtml}div'
+            center.set('class', 'c1')
+
+    def body_i(self):
+        '''Embed em elements that are direct ancestors of body inside a p
+        element
+        '''
+        for tag in ['a', 'i', 'em', 'font', 'u', 'strong', 'span']:
+            for bi in self.soup.xpath(
+                    './/html:body/html:{}'.format(tag),
+                    namespaces={'html': 'http://www.w3.org/1999/xhtml'}):
+                p = etree.Element('{http://www.w3.org/1999/xhtml}p')
+                bi_parent = bi.getparent()
+                bi_parent.insert(bi_parent.index(bi), p)
+                p.append(bi)
+
+    def body_text(self):
+        body = self.soup.find(
+            './/html:body',
+            namespaces={'html': 'http://www.w3.org/1999/xhtml'})
+
+        if body.text is not None:
+            p = etree.Element('{http://www.w3.org/1999/xhtml}p')
+            p.text = body.text
+            body.text = None
+            body.insert(0, p)
 
     def tidy(self):
         """
-        Run html through tidy
+        Clean up the html document
         """
         self.remove_empty_class()
         self.remove_elements()
+        self.add_p_around_text()
+        self.center2div()
+        self.body_i()
+        self.body_text()
 
-        if (not ("xmlns", "http://www.w3.org/1999/xhtml") in
-                self.soup.html.attrs):
-            self.soup.html["xmlns"] = "http://www.w3.org/1999/xhtml"
-
-        self.soup = self.soup.prettify()
-        replacements = {'&shy;': u'­',
-                        '&nbsp;': ' ',
-                        '&aelig;': u'æ',
-                        '&eacute;': u'é'}
-        for key, value in replacements.iteritems():
-            self.soup = self.soup.replace(key, value)
-
-        tidyOption = {# "indent": "auto", # gives empty output in docs
-                      # with minor encoding errors on newer
-                      # (py)tidylib versions; and later steps indent
-                      # it nicely anyway
-                      "indent-spaces": 2,
-                      "wrap": 72,
-                      "markup": "yes",
-                      "output-xml": "yes",
-                      "add-xml-decl": "yes",
-                      "input-xml": "no",
-                      "show-warnings": "no",
-                      "numeric-entities": "yes",
-                      "quote-marks": "yes",
-                      "quote-nbsp": "yes",
-                      "quote-ampersand": "yes",
-                      "break-before-br": "no",
-                      "uppercase-tags": "no",
-                      "uppercase-attributes": "no",
-                      "char-encoding": "utf8",
-                      "enclose-block-text": "yes",
-                      "new-empty-tags": "ms,mb,nf,mu",
-                      "new-inline-tags": "dato,note,idiv,o:p,pb,v:shapetype,\
-                          v:stroke,v:formulas,v:f,v:path,v:shape,v:imagedata,\
-                          o:lock,st1:country-region,st1:place,\
-                          st1:metricconverter,g:plusone,fb:like,fb:comments",
-                      "new-blocklevel-tags": "label,nav,article,header,\
-                          figcaption,time,aside,figure,footer",
-                      "clean": "true",
-                      "drop-proprietary-attributes": "true",
-                      "drop-empty-paras": "true"
-                      }
-
-        tidiedHtml, errors = tidylib.tidy_document(self.soup, tidyOption)
-
-        if tidiedHtml.strip() == "":
-            raise ConversionException(
-                "Empty html after tidy")
-
-        #sys.stderr.write(str(lineno()) + ' ' +  soup.prettify())
-        return tidiedHtml
+        return etree.tostring(self.soup)
 
     def convert2intermediate(self):
         """
@@ -1149,20 +1215,20 @@ class HTMLContentConverter(object):
         intermediate = ''
 
         html = self.tidy()
+
+        #with open('{}.huff.xml'.format(self.orig), 'wb') as huff:
+            #util.print_element(etree.fromstring(html), 0, 2, huff)
+
         try:
             doc = etree.fromstring(html)
             intermediate = transform(doc)
         except etree.XMLSyntaxError as e:
-            logfile = open(self.orig + '.log', 'w')
+            logfile = open('{}.log'.format(self.orig), 'w')
 
-            logfile.write('Error at: ' + str(ccat.lineno()))
+            logfile.write('Error at: {}'.format(str(ccat.lineno())))
             for entry in e.error_log:
-                logfile.write('\n')
-                logfile.write(str(entry.line))
-                logfile.write(':')
-                logfile.write(str(entry.column))
-                logfile.write(" ")
-
+                logfile.write('\n{}: {} '.format(
+                    str(entry.line), str(entry.column)))
                 try:
                     logfile.write(entry.message)
                 except ValueError:
@@ -1174,39 +1240,31 @@ class HTMLContentConverter(object):
             logfile.write(html.encode('utf8'))
             logfile.close()
             raise ConversionException(
-                "Invalid html, log is found in " + self.orig + '.log')
+                "Invalid html, log is found in {}.log".format(self.orig))
 
         if len(transform.error_log) > 0:
 
-            logfile = open(self.orig + '.log', 'w')
+            logfile = open('{}.log'.format(self.orig), 'w')
 
-            logfile.write('Error at: ' + str(ccat.lineno()))
+            logfile.write('Error at: {}'.format(str(ccat.lineno())))
             for entry in transform.error_log:
-                logfile.write('\n')
-                logfile.write(str(entry.line))
-                logfile.write(':')
-                logfile.write(str(entry.column))
-                logfile.write(" ")
-
-                try:
-                    logfile.write(entry.message)
-                except ValueError:
-                    logfile.write(entry.message.encode('latin1'))
-
-                logfile.write('\n')
+                logfile.write('\n{}: {} {}\n'.format(
+                    str(entry.line), str(entry.column),
+                    entry.message.encode('utf8')))
 
             logfile.write(html.encode('utf8'))
             logfile.close()
             raise ConversionException(
-                'transformation failed' + self.orig + '.log')
+                'transformation failed {}.log'.format(self.orig))
 
         return intermediate
 
 
 class HTMLConverter(HTMLContentConverter):
-    def __init__(self, filename):
+    def __init__(self, filename, encoding_from_xsl=None):
         f = open(filename)
-        HTMLContentConverter.__init__(self, filename, f.read())
+        HTMLContentConverter.__init__(self, filename, f.read(),
+                                      encoding_from_xsl)
         f.close()
 
 
@@ -1214,9 +1272,10 @@ class RTFConverter(HTMLContentConverter):
     """
     Class to convert html documents to the giellatekno xml format
     """
-    def __init__(self, filename):
+    def __init__(self, filename, encoding_from_xsl=None):
         self.orig = filename
-        HTMLContentConverter.__init__(self, filename, self.rtf2html())
+        HTMLContentConverter.__init__(self, filename, self.rtf2html(),
+                                      encoding_from_xsl)
 
     def rtf2html(self):
         """Open the rtf document
@@ -1230,10 +1289,17 @@ class RTFConverter(HTMLContentConverter):
             doc = Rtf15Reader.read(
                 io.BytesIO(content.replace('fcharset256', 'fcharset255')))
         except UnicodeDecodeError:
-            raise ConversionException('Unicode problems in ' + self.orig)
+            raise ConversionException('Unicode problems in {}'.format(
+                self.orig))
 
         html = XHTMLWriter.write(doc, pretty=True).read()
-        xml = etree.fromstring(html)
+        try:
+            xml = etree.fromstring(html)
+        except etree.XMLSyntaxError as e:
+            raise ConversionException(
+                'Invalid HTML was created during rtf->html conversion\n'
+                'The error message is: {}'.format(str(e))
+                )
         xml.tag = 'body'
         htmlElement = etree.Element('html')
         htmlElement.append(xml)
@@ -1243,9 +1309,10 @@ class RTFConverter(HTMLContentConverter):
 class DocxConverter(HTMLContentConverter):
     '''Class to convert docx documents to the giellatekno xml format
     '''
-    def __init__(self, filename):
+    def __init__(self, filename, encoding_from_xsl=None):
         self.orig = filename
-        HTMLContentConverter.__init__(self, filename, self.docx2html())
+        HTMLContentConverter.__init__(self, filename, self.docx2html(),
+                                      encoding_from_xsl)
 
     def docx2html(self):
         '''Convert docx to html, return the converted html
@@ -1259,28 +1326,134 @@ class DocConverter(HTMLContentConverter):
     """
     Class to convert Microsoft Word documents to the giellatekno xml format
     """
-    def __init__(self, filename):
+    def __init__(self, filename, encoding_from_xsl=None):
         self.orig = filename
-        HTMLContentConverter.__init__(self, filename, self.doc2html())
+        HTMLContentConverter.__init__(self, filename, self.doc2html(),
+                                      encoding_from_xsl)
 
     def doc2html(self):
         """Convert the doc file using wvHtml.
         Return the output of the wvHtml
         """
-        subp = subprocess.Popen(
-            ['wvHtml', self.orig, '-'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
-
-        (output, error) = subp.communicate()
-
-        if subp.returncode != 0:
-            print >>sys.stderr, 'Could not process', self.orig
-            print >>sys.stderr, output
-            print >>sys.stderr, error
-            return subp.returncode
+        command = ['wvHtml', self.orig, '-']
+        output = run_process(command, self.orig)
 
         return output
+
+    def fix_wv_output(self):
+        '''Examples of headings
+        h1:
+        <html:ul>
+            <html:li value="2">
+                <html:p/>
+                <html:div align="left" name="Overskrift 1">
+                    <html:p>
+                        <html:b>
+                            <html:span>
+                                OVTTASKASOLBMOT
+                            </html:span>
+                        </html:b>
+                    </html:p>
+                </html:div>
+            </html:li>
+        </html:ul>
+
+        h2:
+        <html:ol type="1">
+            <html:li value="1">
+                <html:p/>
+                <html:div align="left" name="Overskrift 2">
+                    <html:p>
+                        <html:b>
+                            <html:span>
+                                čoahkkáigeassu
+                            </html:span>
+                        </html:b>
+                    </html:p>
+                </html:div>
+            </html:li>
+        </html:ol>
+
+        <html:ol type="1">
+            <html:ol type="1">
+                <html:li value="2">
+                    <html:p/>
+                    <html:div align="left" name="Overskrift 2">
+                        <html:p>
+                            <html:b>
+                                <html:span>
+                                    Ulbmil ja váldooasit
+                                </html:span>
+                            </html:b>
+                        </html:p>
+                    </html:div>
+                </html:li>
+            </html:ol>
+        </html:ol>
+
+        h3:
+        <html:ol type="1">
+            <html:ol type="1">
+                <html:ol type="1">
+                    <html:li value="1">
+                        <html:p>
+                        </html:p>
+                        <html:div align="left" name="Overskrift 3">
+                            <html:p>
+                                <html:b>
+                                    <html:span>
+                                        Geaográfalaš
+                                    </html:span>
+                                </html:b>
+                                <html:b>
+                                    <html:span>
+                                        ráddjen
+                                    </html:span>
+                                </html:b>
+
+                            </html:p>
+                        </html:div>
+                    </html:li>
+
+                </html:ol>
+            </html:ol>
+        </html:ol>
+
+        <html:ol type="1">
+            <html:ol type="1">
+                <html:ol type="1">
+                    <html:li value="1">
+                        <html:p>
+                        </html:p>
+                        <html:div align="left" name="Overskrift 3">
+                            <html:p>
+                                <html:b>
+                                <html:span>Iskanjoavku ja sámegielaga
+                                definišuvdn</html:span></html:b>
+                                <html:b><html:span>a</html:span></html:b>
+                            </html:p>
+                        </html:div>
+                    </html:li>
+
+                </html:ol>
+            </html:ol>
+        </html:ol>
+
+        h4:
+        <html:div align="left" name="Overskrift 4">
+            <html:p>
+                <html:b>
+                    <html:i>
+                        <html:span>
+                            Mildosat:
+                        </html:span>
+                    </html:i>
+                </html:b>
+            </html:p>
+        </html:div>
+
+        '''
+        pass
 
 
 class DocumentFixer(object):
@@ -1315,7 +1488,7 @@ class DocumentFixer(object):
                             lines.append(em.text.strip())
                         em.text = ' '.join(lines)
                         if em.tail is not None:
-                            em.tail = ' ' + em.tail
+                            em.tail = ' {}'.format(em.tail)
                         lines = []
 
     def soft_hyphen_to_hyph_tag(self):
@@ -1753,22 +1926,21 @@ class XslMaker(object):
         try:
             filexsl = etree.parse(xslfile)
         except etree.XMLSyntaxError as e:
-            logfile = open(self.filename + '.log', 'w')
+            logfile = open('{}.log'.format(self.filename), 'w')
 
-            logfile.write('Error at: ' + str(ccat.lineno()) + '\n')
+            logfile.write('Error at: {}'.format(str(ccat.lineno())))
             for entry in e.error_log:
-                logfile.write(str(entry))
-                logfile.write('\n')
+                logfile.write('{}\n'.format(str(entry)))
 
             logfile.close()
-            raise ConversionException("Syntax error in " + self.filename)
+            raise ConversionException("Syntax error in {}".format(
+                self.filename))
 
+        common_xsl_path = resource_filename(
+            __name__, 'xslt/common.xsl').replace(' ', '%20')
         self.finalXsl = preprocessXslTransformer(
             filexsl,
-            commonxsl=
-            etree.XSLT.strparam('file://' +
-                                resource_filename(__name__,
-                                                  'xslt/common.xsl')))
+            commonxsl=etree.XSLT.strparam('file://{}'.format(common_xsl_path)))
 
     def get_xsl(self):
         return self.finalXsl
@@ -1781,14 +1953,14 @@ class XslMaker(object):
         except etree.XSLTParseError as (e):
             logfile = open(self.filename.replace('.xsl', '') + '.log', 'w')
 
-            logfile.write('Error at: ' + str(ccat.lineno()) + '\n')
-            logfile.write('Invalid XML in ' + self.filename + '\n')
+            logfile.write('Error at: {}\n'.format(str(ccat.lineno())))
+            logfile.write('Invalid XML in {}\n'.format(self.filename))
             for entry in e.error_log:
-                logfile.write(str(entry))
-                logfile.write('\n')
+                logfile.write('{}\n'.format(str(entry)))
 
             logfile.close()
-            raise ConversionException("Invalid XML in " + self.filename)
+            raise ConversionException("Invalid XML in {}".format(
+                self.filename))
 
 
 class LanguageDetector(object):
@@ -1797,24 +1969,22 @@ class LanguageDetector(object):
     Detect the languages of quotes.
     Detect the languages of the paragraphs.
     """
-    def __init__(self, document):
+    def __init__(self, document, languageGuesser):
         self.document = document
         self.mainlang = self.document.getroot().\
             attrib['{http://www.w3.org/XML/1998/namespace}lang']
 
-        inlangs = []
+        self.inlangs = []
         for language in self.document.findall('header/multilingual/language'):
-            inlangs.append(
+            self.inlangs.append(
                 language.get('{http://www.w3.org/XML/1998/namespace}lang'))
-        if len(inlangs) != 0:
+        if len(self.inlangs) != 0:
             if self.mainlang != '':
-                inlangs.append(self.mainlang)
+                self.inlangs.append(self.mainlang)
             else:
                 raise ConversionException('mainlang not set')
 
-        self.languageGuesser = ngram.NGram(
-            os.path.join(os.getenv('GTHOME'), 'tools/lang-guesser/LM/'),
-            langs=inlangs)
+        self.languageGuesser = languageGuesser
 
     def get_document(self):
         return self.document
@@ -1833,19 +2003,20 @@ class LanguageDetector(object):
 
         if paragraph.get('{http://www.w3.org/XML/1998/namespace}lang') is None:
             paragraph_text = self.remove_quote(paragraph)
-            lang = self.languageGuesser.classify(
-                paragraph_text.encode("ascii", "ignore"))
-            if lang != self.get_mainlang():
-                paragraph.set('{http://www.w3.org/XML/1998/namespace}lang',
-                              lang)
+            if self.languageGuesser is not None:
+                lang = self.languageGuesser.classify(paragraph_text, langs=self.inlangs)
+                if lang != self.get_mainlang():
+                    paragraph.set('{http://www.w3.org/XML/1998/namespace}lang',
+                                lang)
 
-            for element in paragraph.iter("span"):
-                if element.get("type") == "quote":
-                    lang = self.languageGuesser.classify(
-                        element.text.encode("ascii", "ignore"))
-                    if lang != self.get_mainlang():
-                        element.set(
-                            '{http://www.w3.org/XML/1998/namespace}lang', lang)
+                for element in paragraph.iter("span"):
+                    if element.get("type") == "quote":
+                        if element.text is not None:
+                            lang = self.languageGuesser.classify(element.text, langs=self.inlangs)
+                            if lang != self.get_mainlang():
+                                element.set(
+                                    '{http://www.w3.org/XML/1998/namespace}lang',
+                                    lang)
 
         return paragraph
 
@@ -1875,6 +2046,8 @@ class LanguageDetector(object):
 
 class DocumentTester(object):
     def __init__(self, document):
+        '''Document is an etree
+        '''
         self.document = document
         self.mainlang = self.document.getroot().\
             attrib['{http://www.w3.org/XML/1998/namespace}lang']
@@ -1941,22 +2114,14 @@ class DocumentTester(object):
                 self.get_mainlang() +
                 '/src/analyser-gt-desc.xfst')
 
-        subp = subprocess.Popen(lookup_command,
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-        (output, error) = subp.communicate(
-            self.get_preprocessed_mainlang_words())
+        output = run_process(
+            lookup_command, 'nada',
+            to_stdin=self.get_preprocessed_mainlang_words())
 
-        if subp.returncode != 0:
-            print >>sys.stderr, 'Could not lookup text'
-            print >>sys.stderr, output
-            raise ConversionException(error)
-        else:
-            count = 0
-            for line in output.split():
-                if '+?' in line:
-                    count += 1
+        count = 0
+        for line in output.split():
+            if '+?' in line:
+                count += 1
 
             return count
 
@@ -1964,30 +2129,11 @@ class DocumentTester(object):
         """Send the text into preprocess, return the result.
         If the process fails, exit the program
         """
-        preprocess_command = []
-        if self.get_mainlang() == 'sme':
-            abbrFile = os.path.join(
-                os.environ['GTHOME'], 'gt/sme/bin/abbr.txt')
-            corrFile = os.path.join(
-                os.environ['GTHOME'], 'gt/sme/bin/corr.txt')
-            preprocess_command = ['preprocess',
-                                  '--abbr=' + abbrFile, '--corr=' + corrFile]
-        else:
-            preprocess_command = ['preprocess']
+        preprocess_command = util.get_preprocess_command(self.mainlang())
 
-        subp = subprocess.Popen(preprocess_command,
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-        (output, error) = subp.communicate(
-            self.get_mainlang_words().replace('\n', ' '))
-
-        if subp.returncode != 0:
-            print >>sys.stderr, output
-            print >>sys.stderr, error
-            raise ConversionException('Could not preprocess text')
-        else:
-            return output
+        return run_process(
+            preprocess_command, 'nada',
+            to_stdin=self.get_mainlang_words())
 
     def get_mainlang_words(self):
         plist = []
@@ -2011,7 +2157,7 @@ def parse_options():
     parser.add_argument(u'--write-intermediate',
                         action=u"store_true",
                         help=u"Write the intermediate XML representation \
-                        to files ending in .im.xml, for debugging the XSLT.\
+                        to ORIGFILE.im.xml, for debugging the XSLT.\
                         (Has no effect if the converted file already exists.)")
     parser.add_argument('sources',
                         nargs='+',
@@ -2023,23 +2169,24 @@ def parse_options():
 
 
 def worker(args, xsl_file):
+    global LANGUAGEGUESSER
     orig_file = xsl_file[:-4]
-    if os.path.exists(orig_file):
-        conv = Converter(orig_file, args.write_intermediate)
+    if os.path.exists(orig_file) and not orig_file.endswith('.xsl'):
+        conv = Converter(orig_file, LANGUAGEGUESSER, args.write_intermediate)
 
         try:
             conv.write_complete()
         except ConversionException as e:
-            print >>sys.stderr, 'Could not convert', orig_file
-            print >>sys.stderr, e.parameter
+            print >>sys.stderr, 'Could not convert {}'.format(orig_file)
+            print >>sys.stderr, str(e)
     else:
-        print >>sys.stderr, orig_file, 'does not exist'
+        print >>sys.stderr, '{} does not exist'.format(orig_file)
 
 
 def convert_in_parallel(args, xsl_files):
     pool_size = multiprocessing.cpu_count() * 2
     pool = multiprocessing.Pool(processes=pool_size,)
-    pool.map(functools.partial(worker, args), 
+    pool.map(functools.partial(worker, args),
              xsl_files)
     pool.close()
     pool.join()
@@ -2052,39 +2199,35 @@ def convert_serially(args, xsl_files):
 
 
 def collect_files(source_dir):
-    xsl_files = []
-    for root, dirs, files in os.walk(source_dir):
-        for f in files:
-            if f.endswith('.xsl'):
-                xsl_files.append(os.path.join(root, f))
+    return [os.path.join(root, f)
+            for root, dirs, files in os.walk(source_dir)
+            for f in files if f.endswith('.xsl')]
 
-    return xsl_files
-
-
-class SetupException(Exception):
-    pass
 
 def sanity_check():
-    analyser.sanity_check([u'wvHtml', u'pdftotext'])
-    if not 'GTHOME' in os.environ:
-        raise SetupException("You have to set the environment variable GTHOME to "
-                             "your checkout of langtech/trunk!")
+    util.sanity_check([u'wvHtml', u'pdftotext'])
     if not os.path.isfile(Converter.get_dtd_location()):
-        raise SetupException("Couldn't find %s\n"
-                             "Check that GTHOME points at the right directory (currently: %s)."
-                             % (Converter.get_dtd_location(), 
-                                os.environ['GTHOME']))
-        
+        raise util.SetupException(
+            "Couldn't find {}\n"
+            "Check that GTHOME points at the right directory "
+            "(currently: {}).".format(Converter.get_dtd_location(),
+                                      os.environ['GTHOME']))
 
+
+LANGUAGEGUESSER = None          # global due to multiprocessing
 def main():
     sanity_check()
     args = parse_options()
 
+    files = []
+
+    print 'Collecting files to convert'
+
     for source in args.sources:
         if os.path.isfile(source):
-            xsl_file = source + '.xsl'
+            xsl_file = '{}.xsl'.format(source)
             if os.path.isfile(xsl_file):
-                worker(args, xsl_file)
+                files.append(xsl_file)
             else:
                 xsl_stream = open(xsl_file, 'w')
                 xsl_stream.write(
@@ -2094,10 +2237,19 @@ def main():
                     ', then run this command again'
                 sys.exit(1)
         elif os.path.isdir(source):
-            if args.serial:
-                convert_serially(args, collect_files(source))
-            else:
-                convert_in_parallel(args, collect_files(source))
+            files.extend(collect_files(source))
         else:
-            print >>sys.stderr, 'Can not process', source
+            print >>sys.stderr, 'Can not process {}'.format(source)
             print >>sys.stderr, 'This is neither a file nor a directory.'
+
+
+    global LANGUAGEGUESSER
+
+    LANGUAGEGUESSER = text_cat.Classifier()
+
+    print 'Starting the conversion of {} files'.format(len(files))
+
+    if args.serial:
+        convert_serially(args, files)
+    else:
+        convert_in_parallel(args, files)

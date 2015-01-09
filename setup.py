@@ -1,7 +1,7 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 from setuptools import setup, find_packages
-import os
 
 import corpustools.argparse_version
 
@@ -15,25 +15,28 @@ setup(
     url='http://divvun.no',
     license='GPL v3.0',
     long_description=open('README.jspwiki').read(),
-    entry_points = {
-        'console_scripts': ['ccat = corpustools.ccat:main',
-                            'analyse_corpus = corpustools.analyser:main',
-                            'convert2xml = corpustools.converter:main',
-                            'parallelize = corpustools.parallelize:main',
-                            'pick_sd_se = corpustools.pick_samediggi_se_docs:main',
-                            'add_files_to_corpus = corpustools.namechanger:adder_main',
-                            'change_corpus_names = corpustools.namechanger:main']
+    entry_points={
+        'console_scripts': [
+            'ccat = corpustools.ccat:main',
+            'analyse_corpus = corpustools.analyser:main',
+            'convert2xml = corpustools.converter:main',
+            'parallelize = corpustools.parallelize:main',
+            'pick_sd_se = corpustools.pick_samediggi_se_docs:main',
+            'add_files_to_corpus = corpustools.namechanger:adder_main',
+            'change_corpus_names = corpustools.namechanger:main',
+            'saami_crawler = corpustools.saami_crawler:main']
     },
     install_requires=[
         "pyth",
-        "pytidylib",
-        "beautifulsoup4",
         "unidecode",
+        "six",
+        "html5lib",
         "lxml",
         "gitdb",
         "pydocx",
         "gitpython",
+        "requests",
     ],
-    test_suite = 'nose.collector',
+    test_suite='nose.collector',
     include_package_data=True,
 )

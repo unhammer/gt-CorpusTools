@@ -120,7 +120,12 @@ class XMLPrinter:
         else:
             self.one_word_per_line = one_word_per_line
 
-        self.lang = lang
+        if lang and lang.startswith('!'):
+            self.lang = lang[1:]
+            self.invert_lang = True
+        else:
+            self.lang = lang
+            self.invert_lang = False
 
         self.disambiguation = disambiguation
         self.dependency = dependency
@@ -194,7 +199,7 @@ class XMLPrinter:
                         print >>sys.stderr, self.filename
 
                 if child.tail is not None and child.tail.strip() != '':
-                    text += ' ' + child.tail.strip()
+                    text += u' {}'.format(child.tail.strip())
 
         text += self.get_error_attributes(dict(element.attrib))
 
@@ -210,17 +215,20 @@ class XMLPrinter:
 
         attr = []
         for key in sorted(attributes):
-            attr.append(key + '=' + attributes[key])
+            attr.append(u'{}={}'.format(key,
+                                        unicode(attributes[key])))
 
         if len(attr) > 0:
             text += '\t#'
             text += ','.join(attr)
 
             if self.print_filename:
-                text += u', file: ' + os.path.basename(self.filename).decode('utf8')
+                text += u', file: {}'.format(
+                    os.path.basename(self.filename).decode('utf8'))
 
         elif self.print_filename:
-            text += u'\t#file: ' + os.path.basename(self.filename).decode('utf8')
+            text += u'\t#file: {}'.format(
+                os.path.basename(self.filename).decode('utf8'))
 
         return text
 
@@ -247,26 +255,31 @@ class XMLPrinter:
                 buffer.write('\n'.join(textlist).encode('utf8'))
                 buffer.write('\n')
 
+    def get_contents(self, elt_contents, textlist, elt_lang):
+        if elt_contents is not None:
+            text = elt_contents.strip()
+            if text != '' and (
+                    self.lang is None or
+                    (not self.invert_lang and elt_lang == self.lang) or
+                    (self.invert_lang and elt_lang != self.lang)):
+                if not self.one_word_per_line:
+                    textlist.append(text)
+                else:
+                    textlist.append('\n'.join(text.split()))
+
     def get_text(self, element, textlist, parentlang):
         '''Get the text part of an lxml element
         '''
-        if (element.text is not None and element.text.strip() != '' and
-            (self.lang is None or
-             self.get_element_language(element, parentlang) == self.lang)):
-            if not self.one_word_per_line:
-                textlist.append(element.text.strip())
-            else:
-                textlist.append('\n'.join(element.text.strip().split()))
+        self.get_contents(element.text,
+                          textlist,
+                          self.get_element_language(element, parentlang))
 
     def get_tail(self, element, textlist, parentlang):
         '''Get the tail part of an lxml element
         '''
-        if (element.tail is not None and element.tail.strip() != '' and
-                (self.lang is None or parentlang == self.lang)):
-            if not self.one_word_per_line:
-                textlist.append(element.tail.strip())
-            else:
-                textlist.append('\n'.join(element.tail.strip().split()))
+        self.get_contents(element.tail,
+                          textlist,
+                          parentlang)
 
     def visit_children(self, element, textlist, parentlang):
         """Visit the children of element, adding their content to textlist
@@ -547,7 +560,7 @@ def main():
                     for xml_file in files:
                         xml_printer.print_file(os.path.join(root, xml_file))
         else:
-            print >>sys.stderr, target, 'does not exist'
+            print >>sys.stderr, '{} does not exist'.format(target)
 
 if __name__ == '__main__':
     main()

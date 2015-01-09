@@ -35,6 +35,7 @@ import argparse
 
 from corpustools import ccat
 import argparse_version
+import util
 
 
 class Analyser(object):
@@ -51,10 +52,10 @@ class Analyser(object):
         error = False
 
         if filename is None:
-            print >>sys.stderr, filename, 'is not defined'
+            print >>sys.stderr, '{} is not defined'.format(filename)
             error = True
         elif not os.path.exists(filename):
-            print >>sys.stderr, filename, 'does not exist'
+            print >>sys.stderr, '{} does not exist'.format(filename)
             error = True
 
         if error:
@@ -107,7 +108,8 @@ class Analyser(object):
             self.xml_files.append(
                 unicode(xml_file, sys.getfilesystemencoding()))
         except UnicodeDecodeError:
-                print >>sys.stderr, 'Could not handle the file name', xml_file
+                print >>sys.stderr, (
+                    'Could not handle the file name {}'.format(xml_file))
 
     def makedirs(self):
         u"""Make the analysed directory
@@ -125,8 +127,7 @@ class Analyser(object):
         """
         lang = u'{http://www.w3.org/XML/1998/namespace}lang'
         if self.etree.getroot().attrib[lang] is not None:
-            return self.etree.getroot().\
-                attrib[lang]
+            return self.etree.getroot().attrib[lang]
         else:
             return u'none'
 
@@ -194,7 +195,7 @@ class Analyser(object):
         pre_process_command = [u'preprocess']
 
         if self.abbr_file is not None:
-            pre_process_command.append(u'--abbr=' + self.abbr_file)
+            pre_process_command.append(u'--abbr={}'.format(self.abbr_file))
 
         text = self.ccat()
         if text is not None:
@@ -281,7 +282,8 @@ class Analyser(object):
         body = etree.Element(u'body')
 
         disambiguation = etree.Element(u'disambiguation')
-        disambiguation.text = etree.CDATA(self.get_disambiguation().decode(u'utf8'))
+        disambiguation.text = \
+            etree.CDATA(self.get_disambiguation().decode(u'utf8'))
         body.append(disambiguation)
 
         dependency = etree.Element(u'dependency')
@@ -345,29 +347,6 @@ def unwrap_self_analyse(arg, **kwarg):
     return Analyser.analyse(*arg, **kwarg)
 
 
-def sanity_check(program_list):
-    u"""Look for programs and files that are needed to do the analysis.
-    If they don't exist, quit the program
-    """
-    for program in program_list:
-        if which(program) is False:
-            sys.stderr.write(program)
-            sys.stderr.write(u" isn't found in path\n")
-            sys.stderr.write(u'You must install it.\n')
-            sys.exit(2)
-
-
-def which(name):
-    u"""Get the output of the unix command which.
-    Return false if empty, true if non-empty
-    """
-    try:
-        subprocess.check_output([u'which', name])
-        return True
-    except subprocess.CalledProcessError:
-        return False
-
-
 def parse_options():
     '''Parse the given options
     '''
@@ -394,7 +373,7 @@ def main():
     '''Analyse files in the given directories
     '''
     args = parse_options()
-    sanity_check([u'preprocess', u'lookup2cg', u'lookup', u'vislcg3'])
+    util.sanity_check([u'preprocess', u'lookup2cg', u'lookup', u'vislcg3'])
 
     ana = Analyser(args.lang)
     ana.set_analysis_files(
@@ -416,10 +395,13 @@ def main():
         )
 
     ana.collect_files(args.converted_dirs)
-    if args.serial:
-        ana.analyse_serially()
+    if len(ana.xml_files) > 0:
+        if args.serial:
+            ana.analyse_serially()
+        else:
+            ana.analyse_in_parallel()
     else:
-        ana.analyse_in_parallel()
+        print >>sys.stderr, "Did not find any files in", args.converted_dirs
 
 if __name__ == u'__main__':
     main()
