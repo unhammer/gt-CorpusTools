@@ -1218,7 +1218,8 @@ def main():
         print e.message
         sys.exit(1)
 
-    print "Aligning {} and its parallel file".format(args.input_file)
+    print "Aligning {} and its parallel {} file".format(
+        args.input_file, args.parallel_language)
     print "Adding sentence structure that tca2 needs …"
     if parallelizer.divide_p_into_sentences() == 0:
         print "Aligning files …"

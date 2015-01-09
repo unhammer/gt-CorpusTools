@@ -40,7 +40,7 @@ class NameChangerBase(object):
     Will also take care of changing info in meta data of parallel files.
     """
 
-    def __init__(self, oldname):
+    def __init__(self, oldname, new_filename=None):
         """Find the directory the oldname is in.
         self.oldname is the basename of oldname.
         self.newname is the basename of oldname, in lowercase and
@@ -49,7 +49,10 @@ class NameChangerBase(object):
         self.old_filename = os.path.basename(oldname)
         self.old_dirname = os.path.dirname(oldname)
 
-        self.new_filename = self.change_to_ascii()
+        if new_filename is None:
+            self.new_filename = self.change_to_ascii()
+        else:
+            self.new_filename = new_filename
 
     def change_to_ascii(self):
         """Downcase all chars in self.oldname, replace some chars
@@ -77,8 +80,8 @@ class NameChangerBase(object):
 class AddFileToCorpus(NameChangerBase):
     '''Add a given file to a given corpus
     '''
-    def __init__(self, oldname, corpusdir, mainlang, path):
-        super(AddFileToCorpus, self).__init__(oldname)
+    def __init__(self, oldname, corpusdir, mainlang, path, newname):
+        super(AddFileToCorpus, self).__init__(oldname, newname)
         self.mainlang = mainlang
         self.path = path
         self.new_dirname = os.path.join(corpusdir, 'orig', mainlang, path)
@@ -370,7 +373,8 @@ def add_files(args):
             orig,
             args.corpusdir,
             args.mainlang,
-            args.path)
+            args.path,
+            args.newname)
         adder.copy_orig_to_corpus()
         adder.make_metadata_file({})
 
@@ -383,6 +387,11 @@ def parse_options():
         original name, the main language and the genre are also made. The \
         files are added to the working copy.')
 
+    parser.add_argument('--rename',
+                        dest='newname',
+                        help='Optional hardcoded file name to rename to. Only add \
+                        one file at a time if using this. Extension will still be added \
+                        when using http.')
     parser.add_argument('corpusdir',
                         help='The corpus dir (freecorpus or boundcorpus)')
     parser.add_argument('mainlang',
