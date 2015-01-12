@@ -35,6 +35,10 @@ import typosfile
 import text_cat
 import argparse_version
 import util
+import generate_anchor_list
+
+
+here = os.path.dirname(__file__)
 
 
 class CorpusXMLFile:
@@ -43,9 +47,8 @@ class CorpusXMLFile:
     and language
     """
 
-    def __init__(self, name, paralang):
+    def __init__(self, name):
         self.name = name
-        self.paralang = paralang
         self.etree = etree.parse(name)
         self.sanity_check()
 
@@ -91,7 +94,7 @@ class CorpusXMLFile:
         if word_count is not None:
             return word_count.text
 
-    def get_parallel_basename(self):
+    def get_parallel_basename(self, paralang):
         """
         Get the basename of the parallel file
         Input is the lang of the parallel file
@@ -100,17 +103,17 @@ class CorpusXMLFile:
         parallel_files = root.findall(".//parallel_text")
         for p in parallel_files:
             if (p.attrib['{http://www.w3.org/XML/1998/namespace}lang'] ==
-                    self.paralang):
+                    paralang):
                 return p.attrib['location']
 
-    def get_parallel_filename(self):
+    def get_parallel_filename(self, paralang):
         """
         Infer the absolute path of the parallel file
         """
         parallel_dirname = self.get_dirname().replace(
-            self.get_lang(), self.paralang)
-        if self.get_parallel_basename() is not None:
-            parallel_basename = '{}.xml'.format(self.get_parallel_basename())
+            self.get_lang(), paralang)
+        if self.get_parallel_basename(paralang) is not None:
+            parallel_basename = '{}.xml'.format(self.get_parallel_basename(paralang))
 
             return os.path.join(parallel_dirname, parallel_basename)
 
@@ -190,7 +193,7 @@ class SentenceDivider:
         Initialize the inputfile, skip those parts that are meant to be
         skipped, move <later> elements.
         """
-        in_file = CorpusXMLFile(input_xmlfile, parallel_lang)
+        in_file = CorpusXMLFile(input_xmlfile)
         self.doc_lang = in_file.get_lang()
 
         in_file.move_later()
@@ -334,14 +337,12 @@ class Parallelize:
         """
         self.origfiles = []
 
-        tmpfile = CorpusXMLFile(os.path.abspath(origfile1), lang2)
-        self.origfiles.append(tmpfile)
+        self.origfiles.append(CorpusXMLFile(
+            os.path.abspath(origfile1)))
 
-        if self.origfiles[0].get_parallel_filename() is not None:
-            tmpfile = CorpusXMLFile(
-                self.origfiles[0].get_parallel_filename(),
-                self.origfiles[0].get_lang())
-            self.origfiles.append(tmpfile)
+        if self.origfiles[0].get_parallel_filename(lang2) is not None:
+            self.origfiles.append(CorpusXMLFile(
+                self.origfiles[0].get_parallel_filename(lang2)))
         else:
             raise IOError("{} doesn't have a parallel file in {}".format(
                 origfile1, lang2))
@@ -379,52 +380,26 @@ class Parallelize:
         """
         Find out if the given doc is translated from lang2
         """
-        result = False
-        origfile1Tree = etree.parse(self.get_origfile1())
-        root = origfile1Tree.getroot()
-        translated_from = root.find(".//translated_from")
-        if translated_from is not None:
-            if (translated_from.attrib[
-                    '{http://www.w3.org/XML/1998/namespace}lang'] ==
-                    self.get_lang2()):
-                result = True
+        translated_from = self.origfiles[0].get_translated_from()
 
-        return result
+        if translated_from is not None:
+            return translated_from == self.get_lang2()
+        else:
+            result = False
 
     def generate_anchor_file(self):
         """
         Generate an anchor file with lang1 and lang2. Return the path
         to the anchor file
         """
-        generate_script = os.path.join(
-            os.environ['GTHOME'],
-            'gt/script/corpus/generate-anchor-list.pl')
-        util.sanity_check([generate_script])
 
-        infile1 = os.path.join(os.environ['GTHOME'],
-                               'gt/common/src/anchor.txt')
-        infile2 = os.path.join(os.environ['GTHOME'],
-                               'gt/common/src/anchor-admin.txt')
-
-        subp = subprocess.Popen([generate_script,
-                                 '--lang1={}'.format(self.get_lang1()),
-                                 '--lang2{}'.format(self.get_lang2()),
-                                 '--outdir={}'.format(os.environ['GTFREE']),
-                                 infile1, infile2],
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-        (output, error) = subp.communicate()
-        out_filename = 'anchor-{}{}.txt'.format(
-            self.get_lang1(), self.get_lang2())
-
-        if subp.returncode != 0:
-            print >>sys.stderr, out_filename
-            print >>sys.stderr, output
-            print >>sys.stderr, error
-            return subp.returncode
+        gal = generate_anchor_list.GenerateAnchorList(
+            self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
+        gal.generate_file([
+            os.path.join(os.environ['GTHOME'], 'gt/common/src/anchor.txt')])
 
         # Return the absolute path of the resulting file
-        return os.path.join(os.environ['GTFREE'], out_filename)
+        return os.path.abspath(gal.get_outfile())
 
     def divide_p_into_sentences(self):
         """
@@ -457,18 +432,21 @@ class Parallelize:
         """
         Parallelize two files using tca2
         """
-        tca2_script = os.path.join(os.environ['GTHOME'],
-                                   'gt/script/corpus/tca2.sh')
-        util.sanity_check([tca2_script])
+        tca2_jar= os.path.join(here, 'tca2/dist/lib/alignment.jar')
+        #util.sanity_check([tca2_script])
 
         anchor_name = self.generate_anchor_file()
 
-        subp = subprocess.Popen([tca2_script,
-                                 anchor_name,
-                                 self.get_sent_filename(
-                                     self.get_filelist()[0]),
-                                 self.get_sent_filename(
-                                     self.get_filelist()[1])],
+        subp = subprocess.Popen(['java',
+                                 '-Xms512m', '-Xmx1024m',
+                                 '-jar',
+                                 tca2_jar,
+                                 '-cli',
+                                 '-anchor={}'.format(anchor_name),
+                                 '-in1={}'.format(self.get_sent_filename(
+                                     self.get_filelist()[0])),
+                                 '-in2={}'.format(self.get_sent_filename(
+                                     self.get_filelist()[1]))],
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         (output, error) = subp.communicate()
