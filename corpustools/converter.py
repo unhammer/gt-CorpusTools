@@ -31,7 +31,6 @@ import distutils.spawn
 import codecs
 import multiprocessing
 import argparse
-import tempfile
 from pkg_resources import resource_string, resource_filename
 
 import lxml.etree as etree
@@ -46,7 +45,6 @@ import text_cat
 import errormarkup
 import ccat
 import argparse_version
-import functools
 import util
 
 
@@ -78,7 +76,8 @@ class Converter(object):
     """
     Class to take care of data common to all Converter classes
     """
-    def __init__(self, filename, languageGuesser, write_intermediate=False, test=False):
+    def __init__(self, filename, languageGuesser, write_intermediate=False,
+                 test=False):
         self.orig = os.path.abspath(filename)
         self.set_corpusdir()
         self.set_converted_name()
@@ -156,7 +155,8 @@ class Converter(object):
             logfile.close()
 
             raise ConversionException(
-                "Not valid XML. More info in the log file: {}.log".format(self.get_orig()))
+                'Not valid XML. More info in the log file:'
+                '{}.log'.format(self.get_orig()))
 
     def maybe_write_intermediate(self, intermediate):
         if not self._write_intermediate:
@@ -938,16 +938,71 @@ class BiblexmlConverter(object):
         """
         Convert the bible xml to giellatekno xml format using bible2xml.pl
         """
-        (tmpfile, tmpname) = tempfile.mkstemp()
-        bible2xmlpl = 'bible2xml.pl'
-        if distutils.spawn.find_executable(bible2xmlpl) is None:
-            raise ConversionException(
-                "Could not find {} in $PATH".format(bible2xmlpl))
+        document = etree.Element('document')
+        document.append(self.process_bible())
 
-        command = [bible2xmlpl, '-out', tmpname, self.orig]
-        run_process(command, self.orig)
+        return document
 
-        return etree.parse(tmpname)
+    def process_verse(self, verse_element):
+        return verse_element.text
+
+    def process_section(self, section_element):
+        section = etree.Element('section')
+
+        title = etree.Element('p')
+        title.set('type', 'title')
+        title.text = section_element.get('title')
+
+        section.append(title)
+
+        verses = []
+        for verse in section_element.xpath('./verse'):
+            verses.append(self.process_verse(verse))
+
+        p = etree.Element('p')
+        p.text = '\n'.join(verses)
+
+        section.append(p)
+
+        return section
+
+    def process_chapter(self, chapter_element):
+        section = etree.Element('section')
+
+        title = etree.Element('p')
+        title.set('type', 'title')
+        title.text = chapter_element.get('title')
+
+        section.append(title)
+
+        for section_element in chapter_element.xpath('./section'):
+            section.append(self.process_section(section_element))
+
+        return section
+
+    def process_book(self, book_element):
+        section = etree.Element('section')
+
+        title = etree.Element('p')
+        title.set('type', 'title')
+        title.text = book_element.get('title')
+
+        section.append(title)
+
+        for chapter_element in book_element.xpath('./chapter'):
+            section.append(self.process_chapter(chapter_element))
+
+        return section
+
+    def process_bible(self):
+        bible = etree.parse(self.orig)
+
+        body = etree.Element('body')
+
+        for book in bible.xpath('.//book'):
+            body.append(self.process_book(book))
+
+        return body
 
 
 class HTMLContentConverter(object):
@@ -1050,7 +1105,7 @@ class HTMLContentConverter(object):
                 'class': [
                     'QuickNav', 'tabbedmenu', 'printContact', 'documentPaging',
                     'breadcrumbs',
-                    'breadcrumbs ', # regjeringen.no
+                    'breadcrumbs ',  # regjeringen.no
                     'post-footer', 'documentInfoEm',
                     'article-column', 'nrk-globalfooter', 'article-related',
                     'outer-column', 'article-ad', 'article-bottom-element',
@@ -1128,9 +1183,6 @@ class HTMLContentConverter(object):
                 for value in values:
                     search = ('.//html:{}[@{}="{}"]'.format(tag, key, value))
                     for unwanted in self.soup.xpath(search, namespaces=ns):
-                        #print '---------------------------------------'
-                        #print ccat.lineno(), etree.tostring(unwanted)
-                        #print '---------------------------------------'
                         unwanted.getparent().remove(unwanted)
 
     def add_p_around_text(self):
@@ -1216,8 +1268,8 @@ class HTMLContentConverter(object):
 
         html = self.tidy()
 
-        #with open('{}.huff.xml'.format(self.orig), 'wb') as huff:
-            #util.print_element(etree.fromstring(html), 0, 2, huff)
+        #  with open('{}.huff.xml'.format(self.orig), 'wb') as huff:
+        #  util.print_element(etree.fromstring(html), 0, 2, huff)
 
         try:
             doc = etree.fromstring(html)
@@ -1292,18 +1344,7 @@ class RTFConverter(HTMLContentConverter):
             raise ConversionException('Unicode problems in {}'.format(
                 self.orig))
 
-        html = XHTMLWriter.write(doc, pretty=True).read()
-        try:
-            xml = etree.fromstring(html)
-        except etree.XMLSyntaxError as e:
-            raise ConversionException(
-                'Invalid HTML was created during rtf->html conversion\n'
-                'The error message is: {}'.format(str(e))
-                )
-        xml.tag = 'body'
-        htmlElement = etree.Element('html')
-        htmlElement.append(xml)
-        return etree.tostring(htmlElement)
+        return XHTMLWriter.write(doc, pretty=True).read()
 
 
 class DocxConverter(HTMLContentConverter):
@@ -1769,9 +1810,18 @@ class DocumentFixer(object):
     def fix_newstags(self):
         """Convert newstags found in text to xml elements
         """
-        newstags = re.compile(r'(@*logo:|[\s+\']*@*\s*ingres+[\.:]*|.*@*.*bilde\s*\d*:|\W*(@|LED|bilde)*tekst:|@*foto:|@fotobyline:|@*bildetitt:|<pstyle:bilde>|<pstyle:ingress>|<pstyle:tekst>|@*Samleingress:*|tekst/ingress:|billedtekst:)', re.IGNORECASE)
-        titletags = re.compile(r'\s*@m.titt[\.:]|\s*@*stikk:|Mellomtittel:|@*(stikk\.*|under)titt(el)*:|@ttt:|\s*@*[utm]*[:\.]*tit+:|<pstyle:m.titt>|undertittel:', re.IGNORECASE)
-        headertitletags = re.compile(r'(\s*@*(led)*tittel:|\s*@*titt(\s\d)*:|@LEDtitt:|<pstyle:tittel>|@*(hoved|over)titt(el)*:)', re.IGNORECASE)
+        newstags = re.compile(
+            r'(@*logo:|[\s+\']*@*\s*ingres+[\.:]*|.*@*.*bilde\s*\d*:|\W*(@|'
+            r'LED|bilde)*tekst:|@*foto:|@fotobyline:|@*bildetitt:|'
+            r'<pstyle:bilde>|<pstyle:ingress>|<pstyle:tekst>|'
+            r'@*Samleingress:*|tekst/ingress:|billedtekst:)', re.IGNORECASE)
+        titletags = re.compile(
+            r'\s*@m.titt[\.:]|\s*@*stikk:|Mellomtittel:|@*(stikk\.*|'
+            r'under)titt(el)*:|@ttt:|\s*@*[utm]*[:\.]*tit+:|<pstyle:m.titt>|'
+            r'undertittel:', re.IGNORECASE)
+        headertitletags = re.compile(
+            r'(\s*@*(led)*tittel:|\s*@*titt(\s\d)*:|@LEDtitt:|'
+            r'<pstyle:tittel>|@*(hoved|over)titt(el)*:)', re.IGNORECASE)
         bylinetags = re.compile(u'(<pstyle:|\s*@*)[Bb]yline[:>]*\s*(\S+:)*',
                                 re.UNICODE | re.IGNORECASE)
         boldtags = re.compile(u'@bold\s*:')
@@ -1809,7 +1859,8 @@ class DocumentFixer(object):
                             paragraph.getparent().insert(
                                 index,
                                 self.make_element('p',
-                                                  ' '.join(lines).strip()))
+                                                  ' '.join(lines).strip(),
+                                                  attributes=paragraph.attrib))
                         lines = []
 
                         lines.append(newstags.sub('', line))
@@ -1819,7 +1870,8 @@ class DocumentFixer(object):
                             paragraph.getparent().insert(
                                 index,
                                 self.make_element('p',
-                                                  ' '.join(lines).strip()))
+                                                  ' '.join(lines).strip(),
+                                                  attributes=paragraph.attrib))
                         line = bylinetags.sub('', line).strip()
 
                         if unknown is not None:
@@ -1837,7 +1889,8 @@ class DocumentFixer(object):
                             paragraph.getparent().insert(
                                 index,
                                 self.make_element('p',
-                                                  ' '.join(lines).strip()))
+                                                  ' '.join(lines).strip(),
+                                                  attributes=paragraph.attrib))
                         line = boldtags.sub('', line).strip()
                         lines = []
                         index += 1
@@ -1851,7 +1904,8 @@ class DocumentFixer(object):
                             paragraph.getparent().insert(
                                 index,
                                 self.make_element('p',
-                                                  ' '.join(lines).strip()))
+                                                  ' '.join(lines).strip(),
+                                                  attributes=paragraph.attrib))
                         line = line.replace('@kursiv:', '')
                         lines = []
                         index += 1
@@ -1865,7 +1919,8 @@ class DocumentFixer(object):
                             paragraph.getparent().insert(
                                 index,
                                 self.make_element('p',
-                                                  ' '.join(lines).strip()))
+                                                  ' '.join(lines).strip(),
+                                                  attributes=paragraph.attrib))
                         line = headertitletags.sub('', line)
                         lines = []
                         index += 1
@@ -1882,7 +1937,8 @@ class DocumentFixer(object):
                             paragraph.getparent().insert(
                                 index,
                                 self.make_element('p',
-                                                  ' '.join(lines).strip()))
+                                                  ' '.join(lines).strip(),
+                                                  attributes=paragraph.attrib))
                         line = titletags.sub('', line)
                         lines = []
                         index += 1
@@ -1896,7 +1952,8 @@ class DocumentFixer(object):
                             paragraph.getparent().insert(
                                 index,
                                 self.make_element('p',
-                                                  ' '.join(lines).strip()))
+                                                  ' '.join(lines).strip(),
+                                                  attributes=paragraph.attrib))
                         lines = []
                     else:
                         lines.append(line)
@@ -1905,7 +1962,8 @@ class DocumentFixer(object):
                     index += 1
                     paragraph.getparent().insert(
                         index, self.make_element('p',
-                                                 ' '.join(lines).strip()))
+                                                 ' '.join(lines).strip(),
+                                                 attributes=paragraph.attrib))
 
                 paragraph.getparent().remove(paragraph)
 
@@ -2004,21 +2062,26 @@ class LanguageDetector(object):
         if paragraph.get('{http://www.w3.org/XML/1998/namespace}lang') is None:
             paragraph_text = self.remove_quote(paragraph)
             if self.languageGuesser is not None:
-                lang = self.languageGuesser.classify(paragraph_text, langs=self.inlangs)
+                lang = self.languageGuesser.classify(paragraph_text,
+                                                     langs=self.inlangs)
                 if lang != self.get_mainlang():
                     paragraph.set('{http://www.w3.org/XML/1998/namespace}lang',
-                                lang)
+                                  lang)
 
-                for element in paragraph.iter("span"):
-                    if element.get("type") == "quote":
-                        if element.text is not None:
-                            lang = self.languageGuesser.classify(element.text, langs=self.inlangs)
-                            if lang != self.get_mainlang():
-                                element.set(
-                                    '{http://www.w3.org/XML/1998/namespace}lang',
-                                    lang)
+                self.set_span_language(paragraph)
 
         return paragraph
+
+    def set_span_language(self, paragraph):
+        for element in paragraph.iter("span"):
+            if element.get("type") == "quote":
+                if element.text is not None:
+                    lang = self.languageGuesser.classify(element.text,
+                                                         langs=self.inlangs)
+                    if lang != self.get_mainlang():
+                        element.set(
+                            '{http://www.w3.org/XML/1998/namespace}lang',
+                            lang)
 
     def remove_quote(self, paragraph):
         """Extract all text except the one inside <span type='quote'>"""
@@ -2144,6 +2207,76 @@ class DocumentTester(object):
         return ' '.join(plist)
 
 
+class ConverterManager(object):
+    '''Manage the conversion of original files to corpus xml
+    '''
+    LANGUAGEGUESSER = text_cat.Classifier()
+    FILES = []
+
+    def __init__(self, write_intermediate):
+        self._write_intermediate = write_intermediate
+
+    def convert(self, xsl_file):
+        orig_file = xsl_file[:-4]
+        if os.path.exists(orig_file) and not orig_file.endswith('.xsl'):
+            conv = Converter(orig_file, self.LANGUAGEGUESSER,
+                             self._write_intermediate)
+
+            try:
+                conv.write_complete()
+            except ConversionException as e:
+                print >>sys.stderr, 'Could not convert {}'.format(orig_file)
+                print >>sys.stderr, str(e)
+        else:
+            print >>sys.stderr, '{} does not exist'.format(orig_file)
+
+    def convert_in_parallel(self):
+        print 'Starting the conversion of {} files'.format(len(self.FILES))
+
+        pool_size = multiprocessing.cpu_count()
+        pool = multiprocessing.Pool(processes=pool_size,)
+        pool.map(unwrap_self_convert,
+                 zip([self]*len(self.FILES), self.FILES))
+        pool.close()
+        pool.join()
+
+    def convert_serially(self):
+        print 'Starting the conversion of {} files'.format(len(self.FILES))
+
+        for xsl_file in self.FILES:
+            print 'converting', xsl_file[:-4]
+            self.convert(xsl_file)
+
+    def collect_files(self, sources):
+        print 'Collecting files to convert'
+
+        for source in sources:
+            if os.path.isfile(source):
+                xsl_file = '{}.xsl'.format(source)
+                if os.path.isfile(xsl_file):
+                    self.FILES.append(xsl_file)
+                else:
+                    xsl_stream = open(xsl_file, 'w')
+                    xsl_stream.write(
+                        resource_string(__name__, 'xslt/XSL-template.xsl'))
+                    xsl_stream.close()
+                    print "Fill in meta info in", xsl_file, \
+                        ', then run this command again'
+                    sys.exit(1)
+            elif os.path.isdir(source):
+                self.FILES.extend(
+                    [os.path.join(root, f)
+                     for root, dirs, files in os.walk(source)
+                     for f in files if f.endswith('.xsl')])
+            else:
+                print >>sys.stderr, 'Can not process {}'.format(source)
+                print >>sys.stderr, 'This is neither a file nor a directory.'
+
+
+def unwrap_self_convert(arg, **kwarg):
+    return ConverterManager.convert(*arg, **kwarg)
+
+
 def parse_options():
     parser = argparse.ArgumentParser(
         parents=[argparse_version.parser],
@@ -2168,42 +2301,6 @@ def parse_options():
     return args
 
 
-def worker(args, xsl_file):
-    global LANGUAGEGUESSER
-    orig_file = xsl_file[:-4]
-    if os.path.exists(orig_file) and not orig_file.endswith('.xsl'):
-        conv = Converter(orig_file, LANGUAGEGUESSER, args.write_intermediate)
-
-        try:
-            conv.write_complete()
-        except ConversionException as e:
-            print >>sys.stderr, 'Could not convert {}'.format(orig_file)
-            print >>sys.stderr, str(e)
-    else:
-        print >>sys.stderr, '{} does not exist'.format(orig_file)
-
-
-def convert_in_parallel(args, xsl_files):
-    pool_size = multiprocessing.cpu_count() * 2
-    pool = multiprocessing.Pool(processes=pool_size,)
-    pool.map(functools.partial(worker, args),
-             xsl_files)
-    pool.close()
-    pool.join()
-
-
-def convert_serially(args, xsl_files):
-    for xsl_file in xsl_files:
-        print 'converting', xsl_file[:-4]
-        worker(args, xsl_file)
-
-
-def collect_files(source_dir):
-    return [os.path.join(root, f)
-            for root, dirs, files in os.walk(source_dir)
-            for f in files if f.endswith('.xsl')]
-
-
 def sanity_check():
     util.sanity_check([u'wvHtml', u'pdftotext'])
     if not os.path.isfile(Converter.get_dtd_location()):
@@ -2214,42 +2311,15 @@ def sanity_check():
                                       os.environ['GTHOME']))
 
 
-LANGUAGEGUESSER = None          # global due to multiprocessing
 def main():
     sanity_check()
     args = parse_options()
 
-    files = []
+    cm = ConverterManager(args.write_intermediate)
 
-    print 'Collecting files to convert'
-
-    for source in args.sources:
-        if os.path.isfile(source):
-            xsl_file = '{}.xsl'.format(source)
-            if os.path.isfile(xsl_file):
-                files.append(xsl_file)
-            else:
-                xsl_stream = open(xsl_file, 'w')
-                xsl_stream.write(
-                    resource_string(__name__, 'xslt/XSL-template.xsl'))
-                xsl_stream.close()
-                print "Fill in meta info in", xsl_file, \
-                    ', then run this command again'
-                sys.exit(1)
-        elif os.path.isdir(source):
-            files.extend(collect_files(source))
-        else:
-            print >>sys.stderr, 'Can not process {}'.format(source)
-            print >>sys.stderr, 'This is neither a file nor a directory.'
-
-
-    global LANGUAGEGUESSER
-
-    LANGUAGEGUESSER = text_cat.Classifier()
-
-    print 'Starting the conversion of {} files'.format(len(files))
+    cm.collect_files(args.sources)
 
     if args.serial:
-        convert_serially(args, files)
+        cm.convert_serially()
     else:
-        convert_in_parallel(args, files)
+        cm.convert_in_parallel()

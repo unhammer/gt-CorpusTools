@@ -101,7 +101,8 @@ class TestConverter(unittest.TestCase):
             os.path.join(here, 'converter_data'))
 
         self.assertEqual(
-            self.converter_inside_freecorpus.get_corpusdir().rstrip(os.path.sep),
+            self.converter_inside_freecorpus.get_corpusdir().rstrip(
+                os.path.sep),
             os.getenv('GTFREE').rstrip(os.path.sep))
 
     def test_get_converted_name_inside_orig(self):
@@ -434,7 +435,7 @@ class TestHTMLContentConverter(XMLTester):
                 'class': [
                     'QuickNav', 'tabbedmenu', 'printContact', 'documentPaging',
                     'breadcrumbs',
-                    'breadcrumbs ', # regjeringen.no
+                    'breadcrumbs ',
                     'post-footer', 'documentInfoEm',
                     'article-column', 'nrk-globalfooter', 'article-related',
                     'outer-column', 'article-ad', 'article-bottom-element',
@@ -445,9 +446,8 @@ class TestHTMLContentConverter(XMLTester):
                     'searchBox',
                     'murupolku',
                     'ctl00_FullRegion_CenterAndRightRegion_Sorting_sortByDiv',
-                    (
-                        'ctl00_FullRegion_CenterAndRightRegion_HitsControl_'
-                        'searchHitSummary'),
+                    'ctl00_FullRegion_CenterAndRightRegion_HitsControl_'
+                    'searchHitSummary',
                     'AreaTopSiteNav', 'SamiDisclaimer', 'AreaTopRight',
                     'AreaLeft', 'AreaRight', 'ShareArticle', 'tipafriend',
                     'AreaLeftNav', 'PageFooter', 'blog-pager',
@@ -479,9 +479,9 @@ class TestHTMLContentConverter(XMLTester):
                 for value in values:
                     hc = converter.HTMLContentConverter(
                         '.html'.format(tag, key, value),
-                        ('<html><body><{0} {1}="{2}">content:{0}{1}{2}</{0}>'
+                        '<html><body><{0} {1}="{2}">content:{0}{1}{2}</{0}>'
                         '<div class="ada"/></body>'
-                        '</html>').format(tag, key, value), None)
+                        '</html>'.format(tag, key, value), None)
                     hc.remove_elements()
 
                     want = html5parser.document_fromstring(
@@ -2212,6 +2212,26 @@ TITTEL: 3</p>
     <body>
         <p>text</p>
         <p><em type="italic">title</em></p>
+    </body>
+</document>''')
+
+        self.assertXmlEqual(etree.tostring(got), etree.tostring(want))
+
+    def test_fix_newstags_4(self):
+        '''Check that p attributes are kept
+        '''
+        document_fixer = converter.DocumentFixer(etree.fromstring(r'''<document>
+    <header/>
+    <body>
+        <p type="title">title</p>
+    </body>
+</document>'''))
+        document_fixer.fix_newstags()
+        got = document_fixer.get_etree()
+        want = etree.fromstring(u'''<document>
+    <header/>
+    <body>
+        <p type="title">title</p>
     </body>
 </document>''')
 

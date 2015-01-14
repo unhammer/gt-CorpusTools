@@ -35,6 +35,10 @@ import typosfile
 import text_cat
 import argparse_version
 import util
+import generate_anchor_list
+
+
+here = os.path.dirname(__file__)
 
 
 class CorpusXMLFile:
@@ -43,19 +47,19 @@ class CorpusXMLFile:
     and language
     """
 
-    def __init__(self, name, paralang):
+    def __init__(self, name):
         self.name = name
-        self.paralang = paralang
         self.etree = etree.parse(name)
+        self.root = self.etree.getroot()
         self.sanity_check()
 
     def sanity_check(self):
-        if self.etree.getroot().tag != u"document":
+        if self.root.tag != u"document":
             raise util.ArgumentError(
                 "Expected Corpus XML file (output of convert2xml) with "
                 "<document> as the root tag, got {} -- did you pass the "
                 "wrong file?".format(
-                    self.etree.getroot().tag,))
+                    self.root.tag,))
 
     def get_etree(self):
         return self.etree
@@ -82,35 +86,51 @@ class CorpusXMLFile:
         """
         Get the lang of the file
         """
-        return self.etree.getroot().attrib[
+        return self.root.attrib[
             '{http://www.w3.org/XML/1998/namespace}lang']
 
     def get_word_count(self):
-        root = self.etree.getroot()
-        word_count = root.find(".//wordcount")
+        word_count = self.root.find(".//wordcount")
         if word_count is not None:
             return word_count.text
 
-    def get_parallel_basename(self):
+    def get_genre(self):
+        u"""
+        @brief Get the genre from the xml file
+
+        :returns: the genre as set in the xml file
+        """
+        if self.root.find(u".//genre") is not None:
+            return self.root.find(u".//genre").attrib[u"code"]
+
+    def get_ocr(self):
+        u"""
+        @brief Check if the ocr element exists
+
+        :returns: the ocr element or None
+        """
+        return self.root.find(u".//ocr")
+
+    def get_parallel_basename(self, paralang):
         """
         Get the basename of the parallel file
         Input is the lang of the parallel file
         """
-        root = self.etree.getroot()
-        parallel_files = root.findall(".//parallel_text")
+        parallel_files = self.root.findall(".//parallel_text")
         for p in parallel_files:
             if (p.attrib['{http://www.w3.org/XML/1998/namespace}lang'] ==
-                    self.paralang):
+                    paralang):
                 return p.attrib['location']
 
-    def get_parallel_filename(self):
+    def get_parallel_filename(self, paralang):
         """
         Infer the absolute path of the parallel file
         """
         parallel_dirname = self.get_dirname().replace(
-            self.get_lang(), self.paralang)
-        if self.get_parallel_basename() is not None:
-            parallel_basename = '{}.xml'.format(self.get_parallel_basename())
+            self.get_lang(), paralang)
+        if self.get_parallel_basename(paralang) is not None:
+            parallel_basename = '{}.xml'.format(
+                self.get_parallel_basename(paralang))
 
             return os.path.join(parallel_dirname, parallel_basename)
 
@@ -125,8 +145,7 @@ class CorpusXMLFile:
         """
         Get the translated_from element from the orig doc
         """
-        root = self.etree.getroot()
-        translated_from = root.find(".//translated_from")
+        translated_from = self.root.find(".//translated_from")
 
         if translated_from is not None:
             return translated_from.attrib[
@@ -138,8 +157,7 @@ class CorpusXMLFile:
         This is often the only difference between the otherwise
         identical files in converted and prestable/converted
         """
-        root = self.etree.getroot()
-        version_element = root.find(".//version")
+        version_element = self.root.find(".//version")
         version_element.getparent().remove(version_element)
 
     def remove_skip(self):
@@ -147,8 +165,7 @@ class CorpusXMLFile:
         Remove the skip element
         This contains text that is not wanted in e.g. sentence alignment
         """
-        root = self.etree.getroot()
-        skip_list = root.findall(".//skip")
+        skip_list = self.root.findall(".//skip")
 
         for skip_element in skip_list:
             skip_element.getparent().remove(skip_element)
@@ -157,13 +174,30 @@ class CorpusXMLFile:
         """
         Move the later elements to the end of the body element.
         """
-        root = self.etree.getroot()
-        body = root.xpath("/document/body")[0]
+        body = self.root.xpath("/document/body")[0]
 
-        later_list = root.xpath(".//later")
+        later_list = self.root.xpath(".//later")
 
         for later_element in later_list:
             body.append(later_element)
+
+    def set_body(self, new_body):
+        '''Replace the body element with new_body element
+        '''
+        if new_body.tag == 'body':
+            oldbody = self.etree.find(u'.//body')
+            oldbody.getparent().replace(oldbody, new_body)
+
+    def write(self, file_name=None):
+        '''Write self.etree
+        '''
+        if file_name is None:
+            file_name = self.get_name()
+
+        self.etree.write(file_name,
+                         encoding=u'utf8',
+                         pretty_print=True,
+                         xml_declaration=True)
 
 
 class SentenceDivider:
@@ -190,7 +224,7 @@ class SentenceDivider:
         Initialize the inputfile, skip those parts that are meant to be
         skipped, move <later> elements.
         """
-        in_file = CorpusXMLFile(input_xmlfile, parallel_lang)
+        in_file = CorpusXMLFile(input_xmlfile)
         self.doc_lang = in_file.get_lang()
 
         in_file.move_later()
@@ -334,14 +368,12 @@ class Parallelize:
         """
         self.origfiles = []
 
-        tmpfile = CorpusXMLFile(os.path.abspath(origfile1), lang2)
-        self.origfiles.append(tmpfile)
+        self.origfiles.append(CorpusXMLFile(
+            os.path.abspath(origfile1)))
 
-        if self.origfiles[0].get_parallel_filename() is not None:
-            tmpfile = CorpusXMLFile(
-                self.origfiles[0].get_parallel_filename(),
-                self.origfiles[0].get_lang())
-            self.origfiles.append(tmpfile)
+        if self.origfiles[0].get_parallel_filename(lang2) is not None:
+            self.origfiles.append(CorpusXMLFile(
+                self.origfiles[0].get_parallel_filename(lang2)))
         else:
             raise IOError("{} doesn't have a parallel file in {}".format(
                 origfile1, lang2))
@@ -379,52 +411,26 @@ class Parallelize:
         """
         Find out if the given doc is translated from lang2
         """
-        result = False
-        origfile1Tree = etree.parse(self.get_origfile1())
-        root = origfile1Tree.getroot()
-        translated_from = root.find(".//translated_from")
-        if translated_from is not None:
-            if (translated_from.attrib[
-                    '{http://www.w3.org/XML/1998/namespace}lang'] ==
-                    self.get_lang2()):
-                result = True
+        translated_from = self.origfiles[0].get_translated_from()
 
-        return result
+        if translated_from is not None:
+            return translated_from == self.get_lang2()
+        else:
+            return False
 
     def generate_anchor_file(self):
         """
         Generate an anchor file with lang1 and lang2. Return the path
         to the anchor file
         """
-        generate_script = os.path.join(
-            os.environ['GTHOME'],
-            'gt/script/corpus/generate-anchor-list.pl')
-        util.sanity_check([generate_script])
 
-        infile1 = os.path.join(os.environ['GTHOME'],
-                               'gt/common/src/anchor.txt')
-        infile2 = os.path.join(os.environ['GTHOME'],
-                               'gt/common/src/anchor-admin.txt')
-
-        subp = subprocess.Popen([generate_script,
-                                 '--lang1={}'.format(self.get_lang1()),
-                                 '--lang2{}'.format(self.get_lang2()),
-                                 '--outdir={}'.format(os.environ['GTFREE']),
-                                 infile1, infile2],
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-        (output, error) = subp.communicate()
-        out_filename = 'anchor-{}{}.txt'.format(
-            self.get_lang1(), self.get_lang2())
-
-        if subp.returncode != 0:
-            print >>sys.stderr, out_filename
-            print >>sys.stderr, output
-            print >>sys.stderr, error
-            return subp.returncode
+        gal = generate_anchor_list.GenerateAnchorList(
+            self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
+        gal.generate_file([
+            os.path.join(os.environ['GTHOME'], 'gt/common/src/anchor.txt')])
 
         # Return the absolute path of the resulting file
-        return os.path.join(os.environ['GTFREE'], out_filename)
+        return os.path.abspath(gal.get_outfile())
 
     def divide_p_into_sentences(self):
         """
@@ -457,18 +463,21 @@ class Parallelize:
         """
         Parallelize two files using tca2
         """
-        tca2_script = os.path.join(os.environ['GTHOME'],
-                                   'gt/script/corpus/tca2.sh')
-        util.sanity_check([tca2_script])
+        tca2_jar = os.path.join(here, 'tca2/dist/lib/alignment.jar')
+        # util.sanity_check([tca2_script])
 
         anchor_name = self.generate_anchor_file()
 
-        subp = subprocess.Popen([tca2_script,
-                                 anchor_name,
-                                 self.get_sent_filename(
-                                     self.get_filelist()[0]),
-                                 self.get_sent_filename(
-                                     self.get_filelist()[1])],
+        subp = subprocess.Popen(['java',
+                                 '-Xms512m', '-Xmx1024m',
+                                 '-jar',
+                                 tca2_jar,
+                                 '-cli',
+                                 '-anchor={}'.format(anchor_name),
+                                 '-in1={}'.format(self.get_sent_filename(
+                                     self.get_filelist()[0])),
+                                 '-in2={}'.format(self.get_sent_filename(
+                                     self.get_filelist()[1]))],
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         (output, error) = subp.communicate()
@@ -498,7 +507,7 @@ class Tmx:
         self.tmx = tmx
 
         # TODO: not actually used apart from in tests, remove?
-        #self.language_guesser = text_cat.Classifier()
+        # self.language_guesser = text_cat.Classifier()
 
     def get_src_lang(self):
         """
@@ -651,14 +660,16 @@ class Tmx:
         result = input_string
 
         # regex to find space followed by punctuation
-        space_punctuation = re.compile("(?P<space>\s)(?P<punctuation>[\)\]\.»:;,])")
+        space_punctuation = re.compile(
+            "(?P<space>\s)(?P<punctuation>[\)\]\.»:;,])")
         # for every match in the result string, replace the match
         # (space+punctuation) with the punctuation part
         result = space_punctuation.sub(lambda match: match.group(
             'punctuation'), result)
 
         # regex to find punctuation followed by space
-        punctuation_space = re.compile("(?P<punctuation>[\[\(«])(?P<space>\s)+")
+        punctuation_space = re.compile(
+            "(?P<punctuation>[\[\(«])(?P<space>\s)+")
         result = punctuation_space.sub(lambda match: match.group(
             'punctuation'), result)
 
