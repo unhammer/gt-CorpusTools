@@ -46,7 +46,7 @@ class MetadataHandler(object):
         variable = self.tree.getroot().find(
             "{http://www.w3.org/1999/XSL/Transform}"
             "variable[@name='{}']".format(key))
-        return variable.attrib['select'].replace("'", "")
+        return variable.attrib['select'].strip("'")
 
     def write_file(self):
         try:
