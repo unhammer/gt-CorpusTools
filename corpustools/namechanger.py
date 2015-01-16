@@ -335,6 +335,17 @@ def main():
                     name_to_unicode(os.path.join(root, file_)))
                 nc.change_name()
 
+def updater_main():
+    args = parse_args()
+
+    for root, dirs, files in os.walk(args.directory):
+        for file_ in files:
+            if file_.endswith('.xsl'):
+                nc = xslsetter.MetadataUpdater(
+                    name_to_unicode(os.path.join(root, file_)))
+                nc.fix()
+                nc.write_file()
+
 
 def gather_files(origs):
     file_list = []
