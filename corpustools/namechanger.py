@@ -152,7 +152,7 @@ class AddFileToCorpus(NameChangerBase):
         '''
         metafile_name = self.toname() + '.xsl'
         if not os.path.exists(metafile_name):
-            metadata_file = xslsetter.MetadataHandler(metafile_name)
+            metadata_file = xslsetter.MetadataHandler(metafile_name, create=True)
             if self.old_dirname.startswith('http'):
                 metadata_file.set_variable('filename', os.path.join(
                     self.old_dirname, self.old_filename))
@@ -219,8 +219,9 @@ class CorpusNameFixer(NameChangerBase):
         """Change the name of an xsl file using the
         routines of a given repository tool
         """
-        fromname = os.path.join(self.old_dirname,
-                                '{}.xsl'.format(self.old_filename))
+        fromname = os.path.join(
+            self.old_dirname,
+            '{}.xsl'.format(self.old_filename.encode('utf-8')))
         toname = os.path.join(self.old_dirname,
                               '{}.xsl'.format(self.new_filename))
 
@@ -237,19 +238,18 @@ class CorpusNameFixer(NameChangerBase):
 
         return tree
 
-    def set_newname(self, mainlang, paralang, paraname):
+    def set_para_backreference(self, mainlang, paralang, paraname):
+        """Find the xsl file of the parallel file, and make it point correctly
+        to the new name of this file.
+
         """
-        """
-        paradir = self.old_dirname.replace(mainlang, paralang)
+        paradir = self.old_dirname.replace("/"+mainlang+"/",
+                                           "/"+paralang+"/")
         parafile = os.path.join(paradir, '{}.xsl'.format(paraname))
         if os.path.exists(parafile):
-            paratree = self.open_xslfile(parafile)
-            pararoot = paratree.getroot()
-
-            pararoot.find(".//*[@name='para_{}']".format(mainlang)).set(
-                'select', "'{}'".format(self.new_filename))
-
-            paratree.write(parafile, encoding='utf8', xml_declaration=True)
+            paradata = xslsetter.MetadataHandler(parafile)
+            paradata.set_parallel_text(mainlang, self.new_filename)
+            paradata.write_file()
 
     def update_name_in_parallel_files(self):
         """Open the .xsl file belonging to the file we are changing names of.
@@ -260,22 +260,16 @@ class CorpusNameFixer(NameChangerBase):
         xslfile = os.path.join(self.old_dirname,
                                '{}.xsl'.format(self.new_filename))
         if os.path.exists(xslfile):
-            xsltree = self.open_xslfile(xslfile)
-            xslroot = xsltree.getroot()
+            metadata = xslsetter.MetadataHandler(xslfile)
+            xslroot = metadata.tree.getroot()
 
             mainlang = xslroot.find(".//*[@name='mainlang']").get(
-                'select').replace("'", "")
+                'select').strip("'")
 
             if mainlang != "":
-                for element in xslroot.iter():
-                    if (element.attrib.get('name') and
-                            'para_' in element.attrib.get('name') and
-                            element.attrib.get('select') != "''"):
-                        paralang = element.attrib.get('name').replace(
-                            'para_', '')
-                        paraname = element.attrib.get('select').replace(
-                            "'", "")
-                        self.set_newname(mainlang, paralang, paraname)
+                parallels = metadata.get_parallel_texts()
+                for paralang, paraname in parallels.iteritems():
+                    self.set_para_backreference(mainlang, paralang, paraname)
 
     def move_prestable_converted(self):
         """Move the file in prestable/converted from the old to the new name

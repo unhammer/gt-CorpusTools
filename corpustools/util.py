@@ -21,6 +21,7 @@ from __future__ import unicode_literals
 
 import os
 import operator
+import inspect
 
 
 class SetupException(Exception):
@@ -44,6 +45,10 @@ def sort_by_value(table, **args):
                   key=operator.itemgetter(1),
                   **args)
 
+def replace_all(replacements, string):
+    return reduce(lambda a, kv: a.replace(*kv),
+                  replacements,
+                  string)
 
 def is_executable(fullpath):
     return os.path.isfile(fullpath) and os.access(fullpath, os.X_OK)
@@ -87,6 +92,7 @@ def get_lang_resource(lang, resource, fallback=None):
     else:
         return fallback
 
+
 def get_preprocess_command(lang):
     preprocess_script = os.path.join(os.environ['GTHOME'],
                                      'gt/script/preprocess')
@@ -94,12 +100,16 @@ def get_preprocess_command(lang):
     abbr_fb = get_lang_resource("sme", 'tools/preprocess/abbr.txt')
     abbr = get_lang_resource(lang, 'tools/preprocess/abbr.txt', abbr_fb)
     corr = get_lang_resource(lang, 'src/syntax/corr.txt')
-    args = [ "--{}={}".format(opt, path)
-             for opt,path in [('abbr', abbr),
+    args = ["--{}={}".format(opt, path)
+            for opt, path in [('abbr', abbr),
                               ('corr', corr)]
-             if path is not None ]
+            if path is not None]
     return [preprocess_script] + args
 
+
+def lineno():
+    """Returns the current line number in our program."""
+    return inspect.currentframe().f_back.f_lineno
 
 
 def print_element(element, level, indent, out):

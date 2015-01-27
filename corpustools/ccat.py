@@ -20,7 +20,6 @@
 #   Copyright 2013-2014 Børre Gaup <borre.gaup@uit.no>
 #
 
-import inspect
 from lxml import etree
 import StringIO
 import os
@@ -29,10 +28,6 @@ import argparse
 
 import argparse_version
 
-
-def lineno():
-    """Returns the current line number in our program."""
-    return inspect.currentframe().f_back.f_lineno
 
 
 class XMLPrinter:

@@ -7,7 +7,6 @@
 
 import os
 import sys
-import lxml.etree as etree
 import inspect
 import shutil
 import time
@@ -46,14 +45,16 @@ class DocumentPicker(object):
     def classify_file(self, file_):
         '''Identify the language of the file
         '''
-        mh = xslsetter.MetadataHandler(file_)
+        mh = xslsetter.MetadataHandler(file_, create=True)
         url = mh.get_variable('filename')
-        if 'regjeringen.no' in url and 'regjeringen.no' not in file_ and '.pdf' not in file_:
+        if ('regjeringen.no' in url and 'regjeringen.no' not in file_ and
+                '.pdf' not in file_):
             try:
                 remote = urllib2.urlopen(urllib2.Request(url.encode('utf8')))
                 self.copyfile(remote, file_)
             except urllib2.HTTPError:
-                print >>sys.stderr, lineno(), 'Could not fetch', file_.replace('.xsl', '')
+                print >>sys.stderr, lineno(), ('Could not fetch',
+                                               file_.replace('.xsl', ''))
             except UnicodeEncodeError:
                 print >>sys.stderr, lineno(), 'Unicode error in url', url
             print lineno(), 'sleeping …'
@@ -67,12 +68,13 @@ class DocumentPicker(object):
         finally:
             remote.close()
 
+
 def main():
     dp = DocumentPicker(sys.argv[1])
     dp.classify_files()
-    #dp.conclude()
-    #dp.check_consistency()
-    #dp.move_files_set_metadata()
+    #  dp.conclude()
+    #  dp.check_consistency()
+    #  dp.move_files_set_metadata()
 
 if __name__ == "__main__":
     main()

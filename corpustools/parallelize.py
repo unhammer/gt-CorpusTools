@@ -50,15 +50,16 @@ class CorpusXMLFile:
     def __init__(self, name):
         self.name = name
         self.etree = etree.parse(name)
+        self.root = self.etree.getroot()
         self.sanity_check()
 
     def sanity_check(self):
-        if self.etree.getroot().tag != u"document":
+        if self.root.tag != u"document":
             raise util.ArgumentError(
                 "Expected Corpus XML file (output of convert2xml) with "
                 "<document> as the root tag, got {} -- did you pass the "
                 "wrong file?".format(
-                    self.etree.getroot().tag,))
+                    self.root.tag,))
 
     def get_etree(self):
         return self.etree
@@ -85,22 +86,37 @@ class CorpusXMLFile:
         """
         Get the lang of the file
         """
-        return self.etree.getroot().attrib[
+        return self.root.attrib[
             '{http://www.w3.org/XML/1998/namespace}lang']
 
     def get_word_count(self):
-        root = self.etree.getroot()
-        word_count = root.find(".//wordcount")
+        word_count = self.root.find(".//wordcount")
         if word_count is not None:
             return word_count.text
+
+    def get_genre(self):
+        u"""
+        @brief Get the genre from the xml file
+
+        :returns: the genre as set in the xml file
+        """
+        if self.root.find(u".//genre") is not None:
+            return self.root.find(u".//genre").attrib[u"code"]
+
+    def get_ocr(self):
+        u"""
+        @brief Check if the ocr element exists
+
+        :returns: the ocr element or None
+        """
+        return self.root.find(u".//ocr")
 
     def get_parallel_basename(self, paralang):
         """
         Get the basename of the parallel file
         Input is the lang of the parallel file
         """
-        root = self.etree.getroot()
-        parallel_files = root.findall(".//parallel_text")
+        parallel_files = self.root.findall(".//parallel_text")
         for p in parallel_files:
             if (p.attrib['{http://www.w3.org/XML/1998/namespace}lang'] ==
                     paralang):
@@ -113,7 +129,8 @@ class CorpusXMLFile:
         parallel_dirname = self.get_dirname().replace(
             self.get_lang(), paralang)
         if self.get_parallel_basename(paralang) is not None:
-            parallel_basename = '{}.xml'.format(self.get_parallel_basename(paralang))
+            parallel_basename = '{}.xml'.format(
+                self.get_parallel_basename(paralang))
 
             return os.path.join(parallel_dirname, parallel_basename)
 
@@ -128,8 +145,7 @@ class CorpusXMLFile:
         """
         Get the translated_from element from the orig doc
         """
-        root = self.etree.getroot()
-        translated_from = root.find(".//translated_from")
+        translated_from = self.root.find(".//translated_from")
 
         if translated_from is not None:
             return translated_from.attrib[
@@ -141,8 +157,7 @@ class CorpusXMLFile:
         This is often the only difference between the otherwise
         identical files in converted and prestable/converted
         """
-        root = self.etree.getroot()
-        version_element = root.find(".//version")
+        version_element = self.root.find(".//version")
         version_element.getparent().remove(version_element)
 
     def remove_skip(self):
@@ -150,8 +165,7 @@ class CorpusXMLFile:
         Remove the skip element
         This contains text that is not wanted in e.g. sentence alignment
         """
-        root = self.etree.getroot()
-        skip_list = root.findall(".//skip")
+        skip_list = self.root.findall(".//skip")
 
         for skip_element in skip_list:
             skip_element.getparent().remove(skip_element)
@@ -160,13 +174,30 @@ class CorpusXMLFile:
         """
         Move the later elements to the end of the body element.
         """
-        root = self.etree.getroot()
-        body = root.xpath("/document/body")[0]
+        body = self.root.xpath("/document/body")[0]
 
-        later_list = root.xpath(".//later")
+        later_list = self.root.xpath(".//later")
 
         for later_element in later_list:
             body.append(later_element)
+
+    def set_body(self, new_body):
+        '''Replace the body element with new_body element
+        '''
+        if new_body.tag == 'body':
+            oldbody = self.etree.find(u'.//body')
+            oldbody.getparent().replace(oldbody, new_body)
+
+    def write(self, file_name=None):
+        '''Write self.etree
+        '''
+        if file_name is None:
+            file_name = self.get_name()
+
+        self.etree.write(file_name,
+                         encoding=u'utf8',
+                         pretty_print=True,
+                         xml_declaration=True)
 
 
 class SentenceDivider:
@@ -217,7 +248,7 @@ class SentenceDivider:
         o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
         try:
             os.makedirs(o_rel_path)
-        except OSError, e:
+        except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
         f = open(outfile, 'w')
@@ -385,7 +416,7 @@ class Parallelize:
         if translated_from is not None:
             return translated_from == self.get_lang2()
         else:
-            result = False
+            return False
 
     def generate_anchor_file(self):
         """
@@ -432,8 +463,8 @@ class Parallelize:
         """
         Parallelize two files using tca2
         """
-        tca2_jar= os.path.join(here, 'tca2/dist/lib/alignment.jar')
-        #util.sanity_check([tca2_script])
+        tca2_jar = os.path.join(here, 'tca2/dist/lib/alignment.jar')
+        # util.sanity_check([tca2_script])
 
         anchor_name = self.generate_anchor_file()
 
@@ -476,7 +507,7 @@ class Tmx:
         self.tmx = tmx
 
         # TODO: not actually used apart from in tests, remove?
-        #self.language_guesser = text_cat.Classifier()
+        # self.language_guesser = text_cat.Classifier()
 
     def get_src_lang(self):
         """
@@ -629,14 +660,16 @@ class Tmx:
         result = input_string
 
         # regex to find space followed by punctuation
-        space_punctuation = re.compile("(?P<space>\s)(?P<punctuation>[\)\]\.»:;,])")
+        space_punctuation = re.compile(
+            "(?P<space>\s)(?P<punctuation>[\)\]\.»:;,])")
         # for every match in the result string, replace the match
         # (space+punctuation) with the punctuation part
         result = space_punctuation.sub(lambda match: match.group(
             'punctuation'), result)
 
         # regex to find punctuation followed by space
-        punctuation_space = re.compile("(?P<punctuation>[\[\(«])(?P<space>\s)+")
+        punctuation_space = re.compile(
+            "(?P<punctuation>[\[\(«])(?P<space>\s)+")
         result = punctuation_space.sub(lambda match: match.group(
             'punctuation'), result)
 

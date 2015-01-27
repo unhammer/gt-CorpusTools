@@ -2436,6 +2436,33 @@ tests = {
             '</document>'
             ),
         },
+    'div-a-b': {
+        'html': (
+            '<html>'
+            '  <body>'
+            '    <div>'
+            '      <a href="http://www.ovdamearka.no">'
+            '        <b>'
+            '          ovdamearka'
+            '        </b>'
+            '      </a>'
+            '    </div>'
+            '  </body>'
+            '</html>'
+            ),
+        'xml': (
+            '<document>'
+            '  <header>'
+            '    <title/>'
+            '  </header>'
+            '  <body>'
+            '    <p>'
+            '      <em type="bold">ovdamearka</em>'
+            '    </p>'
+            '  </body>'
+            '</document>'
+            ),
+        },
     }
 
 
@@ -2461,7 +2488,7 @@ def check_conversion(testname, html_xml):
     to corpus xml via the xhtml2corpus.xsl style sheet
     '''
     got = converter.HTMLContentConverter(
-        testname, html_xml['html'],
-        None).convert2intermediate()
+        testname,
+        content=html_xml['html']).convert2intermediate()
     want = lxml.etree.fromstring(html_xml['xml'])
     assertXmlEqual(got, want)
