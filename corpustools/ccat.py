@@ -29,7 +29,6 @@ import argparse
 import argparse_version
 
 
-
 class XMLPrinter:
     """This is a class to convert giellatekno xml formatted files to plain text
     """
@@ -551,7 +550,7 @@ def main():
             if os.path.isfile(target):
                 xml_printer.print_file(target)
             elif os.path.isdir(target):
-                for root, dirs, files in os.walk(target):
+                for root, _, files in os.walk(target):
                     for xml_file in files:
                         xml_printer.print_file(os.path.join(root, xml_file))
         else:

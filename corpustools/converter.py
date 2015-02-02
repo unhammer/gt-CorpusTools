@@ -138,7 +138,7 @@ class Converter(object):
             complete = xm.get_transformer()(intermediate)
 
             return complete.getroot()
-        except etree.XSLTApplyError as (e):
+        except etree.XSLTApplyError as e:
             logfile = open('{}.log'.format(self.orig), 'w')
 
             logfile.write('Error at: {}'.format(str(util.lineno())))
@@ -188,16 +188,16 @@ class Converter(object):
             fixer.fix_body_encoding()
 
     mixed_to_unicode = {
-        'e4' : u'ä',
-        '85' : u'…',            # u'\u2026' ... character.
-        '96' : u'–',            # u'\u2013' en-dash
-        '97' : u'—',            # u'\u2014' em-dash
-        '91' : u"‘",            # u'\u2018' left single quote
-        '92' : u"’",            # u'\u2019' right single quote
-        '93' : u'“',            # u'\u201C' left double quote
-        '94' : u'”',            # u'\u201D' right double quote
-        '95' : u"•"             # u'\u2022' bullet
-    } 
+        'e4': u'ä',
+        '85': u'…',            # u'\u2026' ... character.
+        '96': u'–',            # u'\u2013' en-dash
+        '97': u'—',            # u'\u2014' em-dash
+        '91': u"‘",            # u'\u2018' left single quote
+        '92': u"’",            # u'\u2019' right single quote
+        '93': u'“',            # u'\u201C' left double quote
+        '94': u'”',            # u'\u201D' right double quote
+        '95': u"•"             # u'\u2022' bullet
+    }
     def mixed_decoder(self, decode_error):
         badstring = decode_error.object[decode_error.start:decode_error.end]
         badhex = badstring.encode('hex')
@@ -213,7 +213,7 @@ class Converter(object):
         meant to be.
 
         """
-        assert(type(content)==unicode)
+        assert(type(content) == unicode)
         # u'š'.encode('windows-1252') gives '\x9a', which sometimes
         # appears in otherwise utf-8-encoded documents with the
         # meaning 'š'
@@ -566,8 +566,40 @@ class PDFConverter(Converter):
     def __init__(self, filename, write_intermediate=False):
         super(PDFConverter, self).__init__(filename,
                                            write_intermediate)
+        self.page_ranges = self.skip_to_include(self.md.get_variable('skip_pages'))
+
+    def skip_to_include(self, skip_pages):
+        """Turn skip list into include list.
+
+        If input is 1-4,7,9-12, then we want to include
+        [(5,6), (8,8), (13,0)]
+        where 0 means until the end of the document (pdftotext handily
+        treats -l 0 as ∞)
+
+        """
+        if skip_pages is None:
+            return [(1,0)]
+        # Turn single pages into single-page ranges, e.g. 7 → 7-7
+        skip_ranges_norm = ( (r if '-' in r else r+"-"+r)
+                             for r in skip_pages.split(",")
+                             if r != "" )
+        try:
+            skip_ranges = ( tuple(map(int, r.split('-')))
+                            for r in skip_ranges_norm )
+        except ValueError as e:
+            print "Invalid format in skip_pages: {}".format(skip_pages)
+            raise e
+        page = 1
+        include = []
+        for a, b in sorted(skip_ranges):
+            if page <= a-1:
+                include.append((page, a-1))
+            page = b+1
+        include.append((page, 0))
+        return include
 
     def replace_ligatures(self):
+
         """
         document is a stringified xml document
         """
@@ -598,14 +630,37 @@ class PDFConverter(Converter):
             self.text = self.text.replace(key + ' ', value)
             self.text = self.text.replace(key, value)
 
+    def run_process(self, first, last):
+        command = ['pdftotext',
+                   '-enc', 'UTF-8', '-nopgbrk', '-eol', 'unix',
+                   '-f', str(first), '-l', str(last),
+                   self.orig, '-']
+        subp = subprocess.Popen(command,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        (output, error) = subp.communicate()
+
+        if subp.returncode == 99 and "can not be after the last page" in error:
+            # This will happen if a skip-range goes all the way to the
+            # last page, making the next include-range start at last+1
+            return ""
+        elif subp.returncode != 0:
+            logfile = open('{}.log'.format(self.orig), 'w')
+            print >>logfile, 'stdout\n{}\n'.format(output)
+            print >>logfile, 'stderr\n{}\n'.format(error)
+            logfile.close()
+            raise ConversionException("{} failed. \
+                More info in the log file: {}.log".format((command[0]), self.orig))
+        else:
+            return output
+
     def extract_text(self):
         """
         Extract the text from the pdf file using pdftotext
         output contains string from the program and is a utf-8 string
         """
-        command = ['pdftotext', '-enc', 'UTF-8', '-nopgbrk', '-eol',
-                   'unix', self.orig, '-']
-        output = run_process(command, self.orig)
+        output = "\n".join( self.run_process(fr, to)
+                            for fr, to in self.page_ranges )
 
         self.text = unicode(output, encoding='utf8')
         self.replace_ligatures()
@@ -651,7 +706,7 @@ class PDF2XMLConverter(Converter):
     '''
     def __init__(self, filename, write_intermediate=False):
         super(PDF2XMLConverter, self).__init__(filename,
-                                           write_intermediate)
+                                               write_intermediate)
         self.body = etree.Element('body')
         self.parts = []
         self.skip_pages = []
@@ -1018,16 +1073,17 @@ class HTMLContentConverter(Converter):
         self.soup = html5parser.document_fromstring(superclean)
 
         self.convert2xhtml()
-        #with open('{}.huff.xml'.format(self.orig), 'wb') as huff:
-        #    util.print_element(etree.fromstring(self.soup), 0, 2, huff)
+        # with open('{}.huff.xml'.format(self.orig), 'wb') as huff:
+        #     util.print_element(etree.fromstring(self.soup), 0, 2, huff)
 
 
         self.converter_xsl = os.path.join(here, 'xslt/xhtml2corpus.xsl')
 
     def remove_cruft(self, content):
         # from svenskakyrkan.se documents
-        replacements = [ (u'//<script', u'<script'),
-                         (u'&nbsp;', u' '),
+        replacements = [
+            (u'//<script', u'<script'),
+            (u'&nbsp;', u' '),
         ]
         return util.replace_all(replacements, content)
 
@@ -1093,13 +1149,18 @@ class HTMLContentConverter(Converter):
             source = 'xsl'
             encoding = encoding_from_xsl.lower()
 
-        if encoding == 'iso-8859-1' or encoding == 'ascii':
-            return 'windows-1252', source
+        encoding_norm = {
+            'iso-8859-1': 'windows-1252',
+            'ascii': 'windows-1252',
+            'windows-1252': 'windows-1252',
+            'utf-8': 'utf-8',
+        }
+        if encoding in encoding_norm:
+            encoding = encoding_norm[encoding]
         else:
-            if encoding != 'utf-8':
-                print >>sys.stderr, "Unusual encoding found in {} {}: {}".format(
-                    self.orig, source, encoding)
-            return encoding, source
+            print >>sys.stderr, "Unusual encoding found in {} {}: {}".format(
+                self.orig, source, encoding)
+        return encoding, source
 
     def remove_declared_encoding(self, content):
         """lxml explodes if we send a decoded Unicode string with an
@@ -1109,7 +1170,23 @@ class HTMLContentConverter(Converter):
         """
         return re.sub(self.xml_encoding_declaration_re, "", content)
 
+    def simplify_tags(self):
+        """We don't care about the difference between <fieldsets>, <legend>
+        etc. – treat them all as <div>'s for xhtml2corpus
+
+        """
+        superfluously_named_tags = self.soup.xpath(
+            "//html:fieldset | //html:legend | //html:article | //html:hgroup",
+            namespaces={'html': 'http://www.w3.org/1999/xhtml'})
+        for elt in superfluously_named_tags:
+            elt.tag = '{http://www.w3.org/1999/xhtml}div'
+
     def fix_spans_as_divs(self):
+        """XHTML doesn't allow (and xhtml2corpus doesn't handle) span-like
+        elements with div-like elements inside them; fix this and
+        similar issues by turning them into divs.
+
+        """
         spans_as_divs = self.soup.xpath(
             "//*[( descendant::html:div or descendant::html:p"
             "      or descendant::html:h1 or descendant::html:h2"
@@ -1123,7 +1200,8 @@ class HTMLContentConverter(Converter):
         for elt in spans_as_divs:
             elt.tag = '{http://www.w3.org/1999/xhtml}div'
 
-        ps_as_divs = self.soup.xpath("//html:p[descendant::html:div]",
+        ps_as_divs = self.soup.xpath(
+            "//html:p[descendant::html:div]",
             namespaces={'html': 'http://www.w3.org/1999/xhtml'})
         for elt in ps_as_divs:
             elt.tag = '{http://www.w3.org/1999/xhtml}div'
@@ -1137,7 +1215,8 @@ class HTMLContentConverter(Converter):
             elt.tag = '{http://www.w3.org/1999/xhtml}div'
 
     def remove_empty_p(self):
-        ps = self.soup.xpath('//html:p',
+        ps = self.soup.xpath(
+            '//html:p',
             namespaces={'html': 'http://www.w3.org/1999/xhtml'})
 
         for elt in ps:
@@ -1266,11 +1345,12 @@ class HTMLContentConverter(Converter):
                 h_parent = h.getparent()
                 h_parent.insert(h_parent.index(h) + 1, p)
 
+        # br's are not allowed right under body in XHTML:
         for elt in self.soup.xpath(
                 './/html:body/html:br',
                 namespaces={'html': 'http://www.w3.org/1999/xhtml'}):
             elt.tag = '{http://www.w3.org/1999/xhtml}p'
-            elt.text = '&nbsp;'
+            elt.text = ' '
 
     def center2div(self):
         '''Convert center to div in tidy style
@@ -1318,6 +1398,7 @@ class HTMLContentConverter(Converter):
         self.center2div()
         self.body_i()
         self.body_text()
+        self.simplify_tags()
         self.fix_spans_as_divs()
 
     def convert2intermediate(self):

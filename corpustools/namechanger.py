@@ -29,10 +29,12 @@ import shutil
 import lxml.etree as etree
 import unidecode
 import requests
+import urllib
 
 import argparse_version
 import versioncontrol
 import xslsetter
+import util
 
 
 class NameChangerBase(object):
@@ -61,15 +63,17 @@ class NameChangerBase(object):
             u'+': '_', u' ': u'_', u'(': u'_', u')': u'_', u"'": u'_',
             u'–': u'-', u'?': u'_', u',': u'_', u'!': u'_', u',': u'_',
             u'<': u'_', u'>': u'_', u'"': u'_', u'&': u'_', u';': u'_',
-            u'&': u'_'}
+            u'&': u'_', u'#': u'_', u'=': u'-', u'\\': u'_', u'|': u'_',
+        }
 
         # unidecode.unidecode makes ascii only
-        newname = unicode(unidecode.unidecode(
-            self.old_filename)).lower()
+        newname = unicode(
+            unidecode.unidecode(
+                urllib.unquote(
+                    self.old_filename
+                ))).lower()
 
-        for key, value in unwanted_chars.items():
-            if key in newname:
-                newname = newname.replace(key, value)
+        newname = util.replace_all(unwanted_chars.items(), newname)
 
         while '__' in newname:
             newname = newname.replace('__', '_')
@@ -152,7 +156,8 @@ class AddFileToCorpus(NameChangerBase):
         '''
         metafile_name = self.toname() + '.xsl'
         if not os.path.exists(metafile_name):
-            metadata_file = xslsetter.MetadataHandler(metafile_name, create=True)
+            metadata_file = xslsetter.MetadataHandler(metafile_name,
+                                                      create=True)
             if self.old_dirname.startswith('http'):
                 metadata_file.set_variable('filename', os.path.join(
                     self.old_dirname, self.old_filename))

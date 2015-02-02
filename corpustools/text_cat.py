@@ -108,7 +108,7 @@ class NGramModel(object):
                 g = unicode(parts[gram_column])
                 f = int(parts[freq_column])
                 freq[g] = f
-            except ValueError, e:
+            except ValueError as e:
                 raise ValueError("%s: %d %s" % (fname, nl+1, e))
         return freq
 
@@ -312,7 +312,7 @@ class Classifier(object):
             if len(langs) != len(active_langs):
                 missing = langs - active_langs - self.langs_warned
                 if missing:
-                    self.langs_warned.update(missing) # only warn once per lang
+                    self.langs_warned.update(missing)  # only warn once per lang
                     note("WARNING: No language model for {}".format(
                         "/".join(missing)))
             return active_langs
