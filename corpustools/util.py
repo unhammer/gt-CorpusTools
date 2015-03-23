@@ -52,6 +52,24 @@ def replace_all(replacements, string):
                   replacements,
                   string)
 
+def split_path(path):
+    """
+    Split an absolute path into useful components
+    """
+    def split_on_module(path):
+        for module in ["orig", "converted", "prestable", "stable"]: # toktmx?
+            d = "/"+module+"/"
+            if d in abspath:
+                root, rest = abspath.split(d)
+                return root, module, rest
+    abspath = os.path.normpath(os.path.abspath(path))
+    root, module, lang_rest = split_on_module(abspath)
+    l = lang_rest.split("/")
+    lang, genre, rest = l[0], l[1], l[2:]
+    return root, module, lang, genre, "/".join(rest)
+
+
+
 
 def is_executable(fullpath):
     return os.path.isfile(fullpath) and os.access(fullpath, os.X_OK)
