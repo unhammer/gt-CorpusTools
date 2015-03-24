@@ -140,13 +140,12 @@ class CorpusXMLFile:
         """
         if self.get_parallel_basename(paralang) is None:
             return None
-        root, module, lang, genre, rest = util.split_path(self.get_name())
+        root, module, lang, genre, subdirs, _ = util.split_path(self.get_name())
         parallel_basename = '{}.xml'.format(
             self.get_parallel_basename(paralang))
         return apply(
             os.path.join,
-            [root, module, paralang, genre,
-             os.path.dirname(rest),
+            [root, module, paralang, genre, subdirs,
              parallel_basename]
         )
 
