@@ -14,32 +14,50 @@ These scripts will be installed
 !!Requirements
 
 * python2
-* pysvn
 * pip for python2
-* tidyhtml
-* wvHtml
+* pysvn (only needed for add_files_to_corpus)
+* wvHtml (only needed for convert2xml)
+* pdftohtml (only needed for convert2xml)
+* Java (only needed for parallelize)
+* Perl (only needed for parallelize)
 
 On Mac, do:
 
 {{{
-sudo port install py-pysvn py-pip tidy wv
+sudo port install py-pysvn py-pip wv
 }}}
 
 On Debian/Ubuntu, do:
 
 {{{
-sudo apt-get install python-svn python-pip libtidy-0.99-0 wv
+sudo apt-get install python-svn python-pip
 }}}
 
 On Arch Linux, do:
 
 {{{
-sudo pacman -S python2-pip tidyhtml wv
+sudo pacman -S python2-pip wv
 yaourt -S python2-pysvn
 }}}
 
 You also need to have the $GTHOME variable set to where you checked
 out https://victorio.uit.no/langtech/trunk/
+
+!Custom version of pdftohtml (poppler)
+
+The standard version of pdftohtml sometimes produces invalid xml-documents.
+A version that fixes this bug is found at https://github.com/albbas/poppler
+and the poppler developers have been notified about the bug.
+
+To install it do the following
+{{{
+git clone https://github.com/albbas/poppler
+cd poppler
+git checkout fix_xml_wellformedness_with_a_twist
+./autogen.sh
+make
+sudo make install
+}}}
 
 !!Installation
 
@@ -48,12 +66,13 @@ Install the tools for all users on a machine by writing
 
 {{{
 cd $GTHOME/tools/CorpusTools
-sudo pip-2.7 install -U -e .
-sudo pip-2.7 uninstall -y corpustools
+sudo pip install -U -e .
+sudo pip uninstall -y corpustools
 sudo python2.7 setup.py install --install-scripts=/usr/local/bin
 }}}
 
-Note the dot at the end of the second line. The scripts will then be
+Note the dot at the end of the second line. Also, on some systems, pip
+will be called pip2 or pip-2.7 or pip2.7. The scripts will then be
 found in /usr/local/bin
 
 !To own home directory
@@ -62,12 +81,13 @@ Install the tools for the current user by writing
 
 {{{
 cd $GTHOME/tools/CorpusTools
-pip-2.7 install -U --user -e .
-pip-2.7 uninstall -y corpustools
+pip install -U --user -e .
+pip uninstall -y corpustools
 python2.7 setup.py install --user --install-scripts=$HOME/bin
 }}}
 
-Note the dot at the end of the second line. The scripts will then be
+Note the dot at the end of the second line. Also, on some systems, pip
+will be called pip2 or pip-2.7 or pip2.7. The scripts will then be
 found in ~/bin
 
 (It may look a bit odd that we first install and then uninstall. The
@@ -101,19 +121,74 @@ you'll have to "pip uninstall" them individually.
 
 Convert corpus format xml to clean text
 
-The basic function of ccat is to print paragraphs that have text type
-(empty type in our xml-files), that is the default. In addition to text paragraphs, it is possible to print titles, lists and tables.
+ccat has three usage modes, print to stdout the content of:
+* converted files (produced by [convert2xml|CorpusTools.html#convert2xml])
+* converted files containing errormarkup (produced by [convert2xml|CorpusTools.html#convert2xml])
+* analysed files (produced by [analyse_corpus|CorpusTools.html#analyse_corpus])
 
-Typical usage is:
+!Printing content of converted files to stdout
+
+To print out all sme content of all the converted files found in
+$GTFREE/converted/sme/admin and its subdirectories, issue the command:
 
 {{{
 ccat -a -l sme $GTFREE/converted/sme/admin
 }}}
 
-This command will print all text marked in the language sme found the
-directory $GTFREE/converted/sme/admin and its subdirectories.
+It is also possible to print a file at a time:
 
-The complete help text from the program:
+{{{
+ccat -a -l sme $GTFREE/converted/sme/admin/sd/other_files/vl_05_1.doc.xml
+}}}
+
+To print out the content of e.g. all converted pdf files found in a directory
+and its subdirectories, issue this command:
+{{{
+find converted/sme/science/ -name "*.pdf.xml" | xargs ccat -a -l sme
+}}}
+
+!Printing content of analysed files to stdout
+
+The analysed files produced by
+[analyse_corpus|CorpusTools.html#analyse_corpus] contain among other one
+dependency element and one disambiguation element, that contain the
+dependency and disambiguation analysis of the original files content.
+
+{{{
+ccat -dis sda/sda_2006_1_aikio1.pdf.xml
+}}}
+
+Prints the content of the disambiguation element.
+
+{{{
+ccat -dep sda/sda_2006_1_aikio1.pdf.xml
+}}}
+
+Prints the content of the dependency element.
+
+The usage pattern for printing these elements is otherwise the same as
+printing the content of converted files.
+
+Printing dependency elements
+{{{
+ccat -dep $GTFREE/analysed/sme/admin
+ccat -dep $GTFREE/analysed/sme/admin/sd/other_files/vl_05_1.doc.xml
+find analysed/sme/science/ -name "*.pdf.xml" | xargs ccat -dep
+}}}
+
+Printing disambiguation elements
+{{{
+ccat -dis $GTFREE/analysed/sme/admin
+ccat -dis $GTFREE/analysed/sme/admin/sd/other_files/vl_05_1.doc.xml
+find analysed/sme/science/ -name "*.pdf.xml" | xargs ccat -dis
+}}}
+
+!Printing errormarkup content
+
+This usage mode is used in the speller tests. Examples of this usage pattern
+is found in the make files in $GTBIG/prooftools.
+
+!The complete help text from the program:
 
 {{{
 usage: ccat [-h] [-l LANG] [-T] [-L] [-t] [-a] [-c] [-C] [-ort] [-ortreal]
@@ -175,9 +250,7 @@ convert2xml depends on these external programs:
 as well as various files from the Divvun/Giellatekno SVN, at least the
 following files/directories need to exist under $GTHOME:
 
-* gt/script/corpus/bible2xml.pl
 * gt/dtd
-* gt/tools/lang-guesser
 
 !Usage
 
@@ -304,45 +377,59 @@ optional arguments:
 The complete help text from the program is as follows:
 
 {{{
-usage: add_files_to_corpus [-h] corpusdir mainlang path origs [origs ...]
+usage: add_files_to_corpus [-h] [-v] [-p PARALLEL_FILE]
+                           corpusdir mainlang path origs [origs ...]
 
-Copy files to a corpus directory. The filenames are converted to ascii only
-names. Metadata files containing the original name, the main language and the
-genre are also made. The files are added to the working copy.
+Add file(s) to a corpus directory. The filenames are converted to ascii only
+names. Metadata files containing the original name, the main language, the
+genre and possibly parallel files are also made. The files are added to the
+working copy.
 
 positional arguments:
-  corpusdir   The corpus dir (freecorpus or boundcorpus)
-  mainlang    The language of the files that will be added (sma, sme, ...)
-  path        The genre directory where the files will be added. This may also
-              be a path, e.g. admin/facta/skuvlahistorja1
-  origs       The original files or directories where the original files
-              reside (not in svn)
+  corpusdir             The corpus dir (freecorpus or boundcorpus)
+  mainlang              The language of the files that will be added (sma,
+                        sme, ...)
+  path                  The genre directory where the files will be added.
+                        This may also be a path, e.g.
+                        admin/facta/skuvlahistorja1
+  origs                 The original files, urls or directories where the
+                        original files reside (not in svn)
 
 optional arguments:
-  -h, --help  show this help message and exit
+  -h, --help            show this help message and exit
+  -v, --version         show program's version number and exit
+  -p PARALLEL_FILE, --parallel PARALLEL_FILE
+                        An existing file in the corpus that is parallel to the
+                        orig that is about to be added
 }}}
 
-This script adds files found on a local machine to a working copy of
-a corpus.
+Examples:
+Download and add parallel files from the net to the corpus:
 
-It copies files from a directory to the corpusdir. In the process
-it will
-* change the name of the file so that the filename only consists of ascii characters.
-* add a metadata file containing the original name, main language and genre
-* add the renamed files and the metadata files to the working copy
+cd $GTFREE
 
-Typical usage is:
-add_files_to_corpus $GTFREE sme admin/sd dir_where_files_are
+__Adding the first file__
 
-This will copy the files found in the directory {{dir_where_files_are}}
-to {{$GTFREE/orig/sme/admin/sd}}.
+The command
+{{{add_files_to_corpus $GTFREE sme admin/sd/other_files http://www.samediggi.no/content/download/5407/50892/version/2/file/Sametingets+%C3%A5rsmelding+2013+-+nordsamisk.pdf}}}
+
+Gives the message:
+{{{Added $GTFREE/orig/sme/admin/sd/other_files/sametingets_ay-rsmelding_2013_-_nordsamisk.pdf
+Added $GTFREE/orig/sme/admin/sd/other_files/sametingets_ay-rsmelding_2013_-_nordsamisk.pdf.xsl}}}
+
+__Adding the parallel file__
+
+{{{add_files_to_corpus -p orig/sme/admin/sd/other_files/sametingets_ay-rsmelding_2013_-_nordsamisk.pdf $GTFREE nob admin/sd/other_files  http://www.samediggi.no/content/download/5406/50888/version/2/file/Sametingets+%C3%A5rsmelding+2013+-+norsk.pdf}}}
+
+Gives the message:
+{{{Added $GTFREE/orig/nob/admin/sd/other_files/sametingets_ay-rsmelding_2013_-_norsk.pdf
+Added $GTFREE/orig/nob/admin/sd/other_files/sametingets_ay-rsmelding_2013_-_norsk.pdf.xsl}}}
 
 After this is done, you will have to commit the files to
 the working copy, like this:
 
 {{{
-cd $GTFREE/orig/sme/admin
-svn ci
+svn ci orig
 }}}
 
 !!parallelize
@@ -352,15 +439,24 @@ Parallelize two parallel corpus files, write the result to a .tmx file.
 parallelize depends on various files from the Divvun/Giellatekno SVN,
 at least the following directories need to exist in $GTHOME:
 
-* gt/langs (specifically, the abbr.txt and corr.txt files)
+* langs (specifically, the abbr.txt files)
 * gt/common
 * gt/script
-* gt/tools/lang-guesser
-* gt/tools/alignment-tools/tca2 (must be compiled)
 
-Before running, you need to compile st/nob and gt/sme (or at least
-pilfer the abbr/corr files off someone else), and tca2 (just type "ant"
-in $GTHOME/gt/tools/alignment-tools/tca2).
+It also uses the alignment program tca2, but for convenience, the
+alignment.jar-file is included in SVN and installed by CorpusTools
+(you can recompile it by simply typing "ant" in corpustools/tca2).
+
+You can compile the abbr.txt file of langs/sme like this:
+
+{{{
+cd $GTHOME/langs/sme/tools/preprocess && make abbr
+}}}
+
+You should compile at least the sme abbr.txt file, this one is used as
+a fallback if any other language-specific abbr.txt file is not found,
+but preferably also the abbr.txt files of any other languages you plan
+on parallelising with.
 
 
 The complete help text from the program is as follows:
@@ -379,6 +475,27 @@ optional arguments:
   -p PARALLEL_LANGUAGE, --parallel_language PARALLEL_LANGUAGE
                         The language to parallelize the input document with
 }}}
+
+
+You run the program on the files created by convert2xml, e.g.
+{{{
+parallelize -p nob converted/sma/admin/ntfk/tsaekeme.html.xml
+}}}
+This will create a file named
+toktmx/sma2nob/admin/ntfk/tsaekeme.html.toktmx
+
+If you want to parallelize all your sma files with nob in one go, you
+can do e.g.
+{{{
+convert2xml orig/{sma,nob}
+find converted/sma/ -name '*.xml' -print0 | xargs -0 -n1 -P3 parallelize -p nob
+}}}
+
+(The -P3 means "run up to 3 processes at a time", this speeds things
+up since most computer these days have several processor cores.)
+
+The files will end up in corresponding directories under
+toktmx/sma2nob.
 
 !!saami_crawler
 

@@ -22,10 +22,12 @@ setup(
             'convert2xml = corpustools.converter:main',
             'parallelize = corpustools.parallelize:main',
             'pick_sd_se = corpustools.pick_samediggi_se_docs:main',
-            'add_files_to_corpus = corpustools.namechanger:adder_main',
+            'add_files_to_corpus = corpustools.adder:main',
             'change_corpus_names = corpustools.namechanger:main',
             'saami_crawler = corpustools.saami_crawler:main',
-            'generate_anchor_list = generate_anchor_list:main']
+            'generate_anchor_list = corpustools.generate_anchor_list:main',
+            'pytextcat = corpustools.text_cat:main',
+        ]
     },
     install_requires=[
         "pyth",

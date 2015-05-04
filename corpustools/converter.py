@@ -37,7 +37,11 @@ import lxml.html.clean as clean
 from lxml.html import html5parser
 from pyth.plugins.rtf15.reader import Rtf15Reader
 from pyth.plugins.xhtml.writer import XHTMLWriter
-from pydocx.parsers import Docx2Html
+try:
+    from pydocx.pydocx import PyDocX
+except ImportError:
+    from pydocx.parsers import Docx2Html
+
 
 import decode
 import text_cat
@@ -55,10 +59,11 @@ class ConversionException(Exception):
     pass
 
 
-def run_process(command, orig, to_stdin=None):
+def run_process(command, orig, cwd=None, to_stdin=None):
     subp = subprocess.Popen(command,
                             stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
+                            stderr=subprocess.PIPE,
+                            cwd=cwd)
     (output, error) = subp.communicate(to_stdin)
 
     if subp.returncode != 0:
@@ -83,7 +88,11 @@ class Converter(object):
         self.set_converted_name()
         self.dependencies = [self.get_orig(), self.get_xsl()]
         self._write_intermediate = write_intermediate
-        self.md = xslsetter.MetadataHandler(self.get_xsl(), create=True)
+        try:
+            self.md = xslsetter.MetadataHandler(self.get_xsl(), create=True)
+        except xslsetter.XsltException as e:
+            raise ConversionException(e)
+
         self.fix_lang_genre_xsl()
 
     def convert2intermediate(self):
@@ -198,6 +207,7 @@ class Converter(object):
         '94': u'”',            # u'\u201D' right double quote
         '95': u"•"             # u'\u2022' bullet
     }
+
     def mixed_decoder(self, decode_error):
         badstring = decode_error.object[decode_error.start:decode_error.end]
         badhex = badstring.encode('hex')
@@ -333,7 +343,6 @@ class AvvirConverter(Converter):
     """
     Class to convert Ávvir xml files to the giellatekno xml format
     """
-
 
     def __init__(self, filename, write_intermediate=False):
         super(AvvirConverter, self).__init__(filename,
@@ -566,7 +575,8 @@ class PDFConverter(Converter):
     def __init__(self, filename, write_intermediate=False):
         super(PDFConverter, self).__init__(filename,
                                            write_intermediate)
-        self.page_ranges = self.skip_to_include(self.md.get_variable('skip_pages'))
+        self.page_ranges = self.skip_to_include(self.md.get_variable(
+            'skip_pages'))
 
     def skip_to_include(self, skip_pages):
         """Turn skip list into include list.
@@ -578,14 +588,14 @@ class PDFConverter(Converter):
 
         """
         if skip_pages is None:
-            return [(1,0)]
+            return [(1, 0)]
         # Turn single pages into single-page ranges, e.g. 7 → 7-7
-        skip_ranges_norm = ( (r if '-' in r else r+"-"+r)
-                             for r in skip_pages.split(",")
-                             if r != "" )
+        skip_ranges_norm = ((r if '-' in r else r+"-"+r)
+                            for r in skip_pages.split(",")
+                            if r != "")
         try:
-            skip_ranges = ( tuple(map(int, r.split('-')))
-                            for r in skip_ranges_norm )
+            skip_ranges = (tuple(map(int, r.split('-')))
+                           for r in skip_ranges_norm)
         except ValueError as e:
             print "Invalid format in skip_pages: {}".format(skip_pages)
             raise e
@@ -596,10 +606,10 @@ class PDFConverter(Converter):
                 include.append((page, a-1))
             page = b+1
         include.append((page, 0))
+
         return include
 
     def replace_ligatures(self):
-
         """
         document is a stringified xml document
         """
@@ -649,8 +659,9 @@ class PDFConverter(Converter):
             print >>logfile, 'stdout\n{}\n'.format(output)
             print >>logfile, 'stderr\n{}\n'.format(error)
             logfile.close()
-            raise ConversionException("{} failed. \
-                More info in the log file: {}.log".format((command[0]), self.orig))
+            raise ConversionException(
+                '{} failed. More info in the log file: {}.log'.format(
+                    command[0], self.orig))
         else:
             return output
 
@@ -659,8 +670,8 @@ class PDFConverter(Converter):
         Extract the text from the pdf file using pdftotext
         output contains string from the program and is a utf-8 string
         """
-        output = "\n".join( self.run_process(fr, to)
-                            for fr, to in self.page_ranges )
+        output = "\n".join(self.run_process(fr, to)
+                           for fr, to in self.page_ranges)
 
         self.text = unicode(output, encoding='utf8')
         self.replace_ligatures()
@@ -704,21 +715,92 @@ class PDFConverter(Converter):
 class PDF2XMLConverter(Converter):
     '''Class to convert pdf2xml
     '''
+    LIST_CHARS = [u'•']
+    margins = {}
     def __init__(self, filename, write_intermediate=False):
         super(PDF2XMLConverter, self).__init__(filename,
                                                write_intermediate)
         self.body = etree.Element('body')
+        self.in_list = False
         self.parts = []
-        self.skip_pages = []
-        self.margins = {}
+        self.skip_pages = self.set_skip_pages(self.md.get_variable(
+            'skip_pages'))
+        self.set_margins()
+        self.prev_t = None
+
+    def set_skip_pages(self, skip_pages):
+        '''Turn a skip_pages entry into a list of pages
+        '''
+        pages = []
+        if skip_pages is not None:
+            # Turn single pages into single-page ranges, e.g. 7 → 7-7
+            skip_ranges_norm = ((r if '-' in r else r+"-"+r)
+                                for r in skip_pages.strip().split(",")
+                                if r != "")
+
+            skip_ranges = (tuple(map(int, r.split('-')))
+                           for r in skip_ranges_norm)
+
+            try:
+                for start, end in sorted(skip_ranges):
+                    for page in range(start, end + 1):
+                        pages.append(page)
+            except ValueError as e:
+                raise ConversionException("Invalid format in skip_pages: {}".format(skip_pages))
+
+        return pages
+
+    def strip_chars(self, content, extra=u''):
+        remove_re = re.compile(u'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F{}]'.format(
+            extra))
+        content, count = remove_re.subn('', content)
+
+        # Microsoft Word PDF's have Latin-1 file names in links; we
+        # don't actually need any link attributes:
+        content = re.sub(r'<a [^>]+>','<a>', content)
+
+        return content
+
+    def replace_ligatures(self, content):
+        """
+        document is a stringified xml document
+        """
+        replacements = {
+            "[dstrok]": "đ",
+            "[Dstrok]": "Đ",
+            "[tstrok]": "ŧ",
+            "[Tstrok]": "Ŧ",
+            "[scaron]": "š",
+            "[Scaron]": "Š",
+            "[zcaron]": "ž",
+            "[Zcaron]": "Ž",
+            "[ccaron]": "č",
+            "[Ccaron]": "Č",
+            "[eng": "ŋ",
+            " ]": "",
+            "Ď": "đ",  # cough
+            "ď": "đ",  # cough
+            "ﬁ": "fi",
+            "ﬂ": "fl",
+            "ﬀ": "ff",
+            "ﬃ": "ffi",
+            "ﬄ": "ffl",
+            "ﬅ": "ft",
+        }
+
+        for key, value in replacements.items():
+            content = content.replace(key + ' ', value)
+            content = content.replace(key, value)
+
+        return content
 
     def extract_text(self):
         """
-        Extract the text from the pdf file using pdftotext
-        output contains string from the program and is a utf-8 string
+        Extract the text from the pdf file using pdftohtml
+        run_process produces an utf-8 string containing the output of pdftohtml
         """
-        command = ['pdftohtml', '-enc', 'UTF-8', '-stdout',
-                   '-i', '-xml', self.orig]
+        command = ['pdftohtml', '-hidden', '-enc', 'UTF-8', '-stdout',
+                   '-nodrm', '-i', '-xml', self.orig]
         return run_process(command, self.orig)
 
     def convert2intermediate(self):
@@ -726,28 +808,81 @@ class PDF2XMLConverter(Converter):
         etree.SubElement(document, 'header')
         document.append(self.body)
 
-        root_element = etree.fromstring(self.extract_text())
+        pdf_content = self.replace_ligatures(self.strip_chars(self.extract_text()))
+        #with open('/tmp/pdf.xml', 'w') as uff:
+            #print >>uff, pdf_content
+        try:
+            root_element = etree.fromstring(pdf_content)
+        except etree.XMLSyntaxError as e:
+            logfile = open('{}.log'.format(self.orig), 'w')
+
+            logfile.write('Error at: {}'.format(str(util.lineno())))
+            for entry in e.error_log:
+                logfile.write('\n{}: {} '.format(
+                    str(entry.line), str(entry.column)))
+                try:
+                    logfile.write(entry.message)
+                except ValueError:
+                    logfile.write(entry.message.encode('latin1'))
+
+                logfile.write('\n')
+
+            logfile.write(pdf_content)
+            logfile.close()
+            raise ConversionException(
+                'Invalid xml from pdftohtml, log is found in '
+                '{}.log'.format(self.orig))
+
         self.parse_pages(root_element)
 
         return document
 
-    def set_margins(self, margin_lines={}):
-        '''margins_lines will be fetched from the metadata file belonging to
-        the original file. Before it is passed here, the validity of them
-        are checked.
+    def get_margin_lines(self):
+        '''Get the margin lines from the metadata file
         '''
-        for key, value in margin_lines.items():
-            self.margins[key] = self.set_margin(value)
+        margin_lines = {}
 
-    def set_margin(self, value):
+        for key in ['right_margin', 'top_margin', 'left_margin', 'bottom_margin']:
+            if self.md.get_variable(key) is not None and self.md.get_variable(key).strip() != '':
+                margin_lines[key] = self.md.get_variable(key).strip()
+
+        return margin_lines
+
+    def set_margins(self):
+        '''margins_lines is fetched from the metadata file belonging to
+        the original file, if available. Before it is passed here, the
+        validity of them are checked.
         '''
+        margin_lines = self.get_margin_lines()
+        #print >>sys.stderr, util.lineno(), margin_lines
+        for key, value in margin_lines.items():
+            if ('all' in value and ('odd' in value or 'even' in value) or
+                '=' not in value):
+                raise ConversionException('Invalid format in the variable {} '
+                    'in the file:\n{}\n{}\n'
+                    'Format should be [all|odd|even|pagenumber]=integer'.format(
+                    key, self.get_xsl(), value))
+            try:
+                self.margins[key] = self.set_margin(value)
+            except ValueError as (e):
+                raise ConversionException('Invalid format in the variable {} '
+                    'in the file:\n{}\n{}\n'
+                    'Format should be [all|odd|even|pagenumber]=integer'.format(
+                    key, self.get_xsl(), value))
+
+        #print >>sys.stderr, util.lineno(), margins
+        
+    def set_margin(self, value):
+        '''Set the margins for given margin
+
+        If the value following the = sign is not an integer a ValueError is
+        raised.
+        That exception is caught by set_margins
         '''
         m = {}
-        parts = value.split(';')
-        for part in parts:
-            page = part.split('=')[0].strip()
-            margin = int(part.split('=')[1])
-            m[page] = margin
+        for part in value.split(','):
+            (page, margin) = tuple(part.split('='))
+            m[page.strip()] = int(margin)
 
         return m
 
@@ -759,40 +894,37 @@ class PDF2XMLConverter(Converter):
         page_width = int(page.get('width'))
         page_height = int(page.get('height'))
 
-        for margin in ['rm', 'lm', 'tm', 'bm']:
+        for margin in ['right_margin', 'left_margin', 'top_margin', 'bottom_margin']:
+            coefficient = 7
             if margin in self.margins.keys():
                 m = self.margins[margin]
                 if m.get(page_number) is not None:
-                    margins[margin] = m[page_number.strip()]
+                    coefficient = m[page_number.strip()]
                 elif m.get('all') is not None:
-                    margins[margin] = m['all']
+                    coefficient = m['all']
                 elif int(page_number) % 2 == 0 and m.get('even') is not None:
-                    margins[margin] = m['even']
+                    coefficient = m['even']
                 elif int(page_number) % 2 == 1 and m.get('odd') is not None:
-                    margins[margin] = m['odd']
-                else:
-                    margins[margin] = self.compute_margin(margin, page_height,
-                                                          page_width)
-            else:
-                margins[margin] = self.compute_margin(margin, page_height,
-                                                      page_width)
+                    coefficient = m['odd']
+
+            margins[margin] = self.compute_margin(margin, page_height,
+                                                  page_width, coefficient)
 
         return margins
 
-    def compute_margin(self, margin, page_height, page_width):
+    def compute_margin(self, margin, page_height, page_width, coefficient):
         '''Compute the margins if they are not explicitely set
-        '''
-        default = 0.07
-        if margin == 'rm':
-            return int(default * page_width)
-        if margin == 'lm':
-            return int(page_width - default * page_width)
-        if margin == 'tm':
-            return int(default * page_height)
-        if margin == 'bm':
-            return int(page_height - default * page_height)
 
-        return margin
+        '''
+        #print util.lineno(), margin, page_height, page_width, coefficient
+        if margin == 'right_margin':
+            return int(coefficient * page_width / 100)
+        if margin == 'left_margin':
+            return int(page_width - coefficient * page_width / 100)
+        if margin == 'top_margin':
+            return int(coefficient * page_height / 100)
+        if margin == 'bottom_margin':
+            return int(page_height - coefficient * page_height / 100)
 
     def append_to_body(self, element):
         self.body.append(element)
@@ -813,33 +945,61 @@ class PDF2XMLConverter(Converter):
         elements become the text parts of <i> and <b> elements.
         '''
 
-        print util.lineno(), etree.tostring(textelement)
+        #print util.lineno(), etree.tostring(textelement)
         if (textelement is not None and int(textelement.get('width')) > 0):
             if textelement.text is not None:
+                # NOTE: Search for both hyphen and soft hyphen
+                found_hyph = re.search('\w[-­]$', textelement.text,
+                                       re.UNICODE)
                 if len(self.parts) > 0:
+                    #print util.lineno(), textelement.text
                     if isinstance(self.parts[-1], etree._Element):
+                        #print util.lineno(), textelement.text
                         if self.parts[-1].tail is not None:
-                            self.parts[-1].tail += u' {}'.format(
-                                textelement.text)
+                            if found_hyph:
+                                #print util.lineno(), textelement.text
+                                self.parts[-1].tail += u' {}'.format(
+                                    textelement.text[:-1])
+                                self.parts.append(etree.Element('hyph'))
+                            else:
+                                self.parts[-1].tail += u' {}'.format(
+                                    textelement.text)
                         else:
-                            self.parts[-1].tail = textelement.text
+                            if found_hyph:
+                                #print util.lineno(), textelement.text
+                                self.parts[-1].tail = u'{}'.format(
+                                    textelement.text[:-1])
+                                self.parts.append(etree.Element('hyph'))
+                            else:
+                                #print util.lineno(), textelement.text
+                                self.parts[-1].tail = textelement.text
                     else:
-                        self.parts[-1] += u' {}'.format(
-                            unicode(textelement.text))
+                        #print util.lineno(), textelement.text
+                        if found_hyph:
+                            #print util.lineno(), textelement.text
+                            self.parts[-1] += u' {}'.format(
+                                unicode(textelement.text[:-1]))
+                            self.parts.append(etree.Element('hyph'))
+                        else:
+                            #print util.lineno(), textelement.text
+                            self.parts[-1] += u' {}'.format(
+                                unicode(textelement.text))
                 else:
-                    m = re.search('\w-$', textelement.text, re.UNICODE)
-                    if m:
+                    #print util.lineno(), textelement.text
+                    if found_hyph:
+                        #print util.lineno(), textelement.text
                         self.parts.append(textelement.text[:-1])
                         self.parts.append(etree.Element('hyph'))
                     else:
+                        #print util.lineno(), textelement.text
                         self.parts.append(textelement.text)
 
             for child in textelement:
                 em = etree.Element('em')
 
                 if child.text is not None:
-                    m = re.search('\w-$', child.text, re.UNICODE)
-                    if m:
+                    found_hyph = re.search('\w-$', child.text, re.UNICODE)
+                    if found_hyph:
                         em.text = child.text[:-1]
                         em.append(etree.Element('hyph'))
                     else:
@@ -850,8 +1010,9 @@ class PDF2XMLConverter(Converter):
                 if len(child) > 0:
                     for grandchild in child:
                         if grandchild.text is not None:
-                            m = re.search('\w-$', grandchild.text, re.UNICODE)
-                            if m:
+                            found_hyph = re.search('\w-$', grandchild.text,
+                                                   re.UNICODE)
+                            if found_hyph:
                                 em.text += grandchild.text[:-1]
                                 em.append(etree.Element('hyph'))
                             else:
@@ -867,25 +1028,53 @@ class PDF2XMLConverter(Converter):
                 em.tail = child.tail
 
                 self.parts.append(em)
-        print util.lineno(), self.parts
+        #print util.lineno(), self.parts
 
-    def is_same_paragraph(self, text1, text2):
-        '''Define the incoming text elements text1 and text2 to belong to
+    def is_text_in_same_paragraph(self, text):
+        h1 = float(self.prev_t.get('height'))
+        h2 = float(text.get('height'))
+
+        delta = float(text.get('top')) - float(self.prev_t.get('top'))
+        ratio = 1.5
+
+        return h1 == h2 and delta < ratio * h1 and delta > 0
+
+    def is_same_paragraph(self, text):
+        '''Define the incoming text elements text1 and text to belong to
         the same paragraph if they have the same height and if the difference
         between the top attributes is less than ratio times the height of
         the text elements.
         '''
         result = False
 
-        h1 = float(text1.get('height'))
-        h2 = float(text2.get('height'))
-        f1 = text1.get('font')
-        f2 = text2.get('font')
-        delta = float(text2.get('top')) - float(text1.get('top'))
-        ratio = 1.5
+        h1 = float(self.prev_t.get('height'))
+        h2 = float(text.get('height'))
+        t1 = int(self.prev_t.get('top'))
+        t2 = int(text.get('top'))
+        #print util.lineno(), h1, h2, t1, t2, h1 == h2, t1 > t2
+        #f1 = self.prev_t.get('font')
+        #f2 = text.get('font')
+        real_text = etree.tostring(text, method='text', encoding='unicode')
 
-        if (f1 == f2 and h1 == h2 and delta < ratio * h1):
+        if self.is_text_in_same_paragraph(text):
+            if (real_text[0] in self.LIST_CHARS):
+                self.in_list = True
+                #print util.lineno(), text.text
+            elif (re.match('\s', real_text[0]) is None and
+                  real_text[0] == real_text[0].upper() and self.in_list):
+                self.in_list = False
+                result = False
+                #print util.lineno(), text.text
+            elif (real_text[0] not in self.LIST_CHARS):
+                #print util.lineno()
+                result = True
+        elif (h1 == h2 and t1 > t2 and not re.match('\d', real_text[0]) and
+              real_text[0] == real_text[0].lower()):
+            #print util.lineno()
             result = True
+        else:
+            #print util.lineno()
+            self.in_list = False
 
         return result
 
@@ -894,33 +1083,35 @@ class PDF2XMLConverter(Converter):
         '''
         margins = self.compute_margins(page)
 
-        prev_t = None
         for t in page.iter('text'):
-            if prev_t is not None:
-                print util.lineno(), etree.tostring(prev_t), etree.tostring(t)
-                if not self.is_same_paragraph(prev_t, t):
-                    self.append_to_body(self.make_paragraph())
             if self.is_inside_margins(t, margins):
-                self.extract_textelement(t)
-                print util.lineno(), self.parts
-                prev_t = t
-
-        self.append_to_body(self.make_paragraph())
+                if self.prev_t is not None:
+                    if not self.is_same_paragraph(t):
+                        #print util.lineno(), etree.tostring(self.prev_t, encoding='utf8'), etree.tostring(t, encoding='utf8')
+                        if len(self.parts) > 0:
+                            self.append_to_body(self.make_paragraph())
+                if len(t) > 0 or t.text is not None:
+                    self.extract_textelement(t)
+                    self.prev_t = t
+                    #print util.lineno(), self.parts
 
     def is_inside_margins(self, t, margins):
         '''Check if t is inside the given margins
 
         t is a text element
         '''
-        return (int(t.get('top')) > margins['tm'] and
-                int(t.get('top')) < margins['bm'] and
-                int(t.get('left')) > margins['rm'] and
-                int(t.get('left')) < margins['lm'])
+        return (int(t.get('top')) > margins['top_margin'] and
+                int(t.get('top')) < margins['bottom_margin'] and
+                int(t.get('left')) > margins['right_margin'] and
+                int(t.get('left')) < margins['left_margin'])
 
     def parse_pages(self, root_element):
         for page in root_element.iter('page'):
-            if page.get('number') not in self.skip_pages:
+            if int(page.get('number')) not in self.skip_pages:
                 self.parse_page(page)
+
+        if len(self.parts) > 0:
+            self.append_to_body(self.make_paragraph())
 
     def make_paragraph(self):
         '''parts is a list of strings and etree.Elements that belong to the
@@ -928,34 +1119,38 @@ class PDF2XMLConverter(Converter):
 
         The parts list is converted to a p element.
         '''
-        if len(self.parts) > 0:
-            p = etree.Element('p')
-            print util.lineno(), self.parts[0], self.parts, type(self.parts[0])
-            if (isinstance(self.parts[0], str) or
-                    isinstance(self.parts[0], unicode)):
-                p.text = self.parts[0]
-            else:
-                p.append(self.parts[0])
+        p = etree.Element('p')
+        #print util.lineno(), self.parts[0], self.parts, type(self.parts[0])
+        if (isinstance(self.parts[0], str) or
+                isinstance(self.parts[0], unicode)):
+            p.text = self.parts[0]
+        else:
+            p.append(self.parts[0])
 
-            for part in self.parts[1:]:
-                if isinstance(part, etree._Element):
-                    if (len(p) > 0 and len(p[-1]) > 0 and
-                            p[-1][-1].tag == 'hyph'):
-                        if (p[-1].tag == part.tag and
-                                p[-1].get('type') == part.get('type')):
-                            p[-1][-1].tail = part.text
-                            p[-1].tail = part.tail
-                        else:
-                            p.append(part)
+        for part in self.parts[1:]:
+            if isinstance(part, etree._Element):
+                if (len(p) > 0 and len(p[-1]) > 0 and
+                        p[-1][-1].tag == 'hyph'):
+                    if (p[-1].tag == part.tag and
+                            p[-1].get('type') == part.get('type')):
+                        p[-1][-1].tail = part.text
+                        p[-1].tail = part.tail
                     else:
                         p.append(part)
                 else:
-                    if p[-1].tail is None:
-                        p[-1].tail = part
-                    else:
-                        p[-1].tail = ' {}'.format(part)
+                    p.append(part)
+            else:
+                if p[-1].tail is None:
+                    p[-1].tail = part
+                else:
+                    p[-1].tail = ' {}'.format(part)
 
-            return p
+        if p.text is not None and p.text[0] in self.LIST_CHARS:
+            p.set('type', 'listitem')
+            p.text = p.text[1:]
+        #print util.lineno(), self.parts[0], self.parts, type(self.parts[0])
+
+        return p
 
 
 class BiblexmlConverter(Converter):
@@ -975,7 +1170,13 @@ class BiblexmlConverter(Converter):
 
         return document
 
-    def process_verse(self, verse_element):
+    @staticmethod
+    def process_verse(verse_element):
+        if verse_element.tag != 'verse':
+            raise UserWarning(
+                '{}: Unexpected element in verse: {}'.format(
+                    self.orig, verse_element.tag))
+
         return verse_element.text
 
     def process_section(self, section_element):
@@ -988,29 +1189,70 @@ class BiblexmlConverter(Converter):
         section.append(title)
 
         verses = []
-        for verse in section_element.xpath('./verse'):
-            text = self.process_verse(verse)
+        for element in section_element:
+            if element.tag == 'p':
+                if len(verses) > 0:
+                    section.append(self.make_p(verses))
+                    verses = []
+                section.append(self.process_p(element))
+            elif element.tag == 'verse':
+                text = self.process_verse(element)
+                if text is not None:
+                    verses.append(text)
+            else:
+                raise UserWarning(
+                    '{}: Unexpected element in section: {}'.format(
+                        self.orig, element.tag))
+
+        section.append(self.make_p(verses))
+
+        return section
+
+    def process_p(self, p):
+        verses = []
+        for child in p:
+            text = self.process_verse(child)
             if text is not None:
                 verses.append(text)
 
         p = etree.Element('p')
         p.text = '\n'.join(verses)
 
-        section.append(p)
+        return p
 
-        return section
+    @staticmethod
+    def make_p(verses):
+        p = etree.Element('p')
+        p.text = '\n'.join(verses)
+
+        return p
 
     def process_chapter(self, chapter_element):
         section = etree.Element('section')
 
+        text_parts = []
+        if chapter_element.get('number') is not None:
+            text_parts.append(chapter_element.get('number'))
+        if chapter_element.get('title') is not None:
+            text_parts.append(chapter_element.get('title'))
+
         title = etree.Element('p')
         title.set('type', 'title')
-        title.text = chapter_element.get('title')
+        title.text = ' '.join(text_parts)
 
         section.append(title)
 
-        for section_element in chapter_element.xpath('./section'):
-            section.append(self.process_section(section_element))
+        for child in chapter_element:
+            if child.tag == 'section':
+                section.append(self.process_section(child))
+            elif child.tag == 'verse':
+                p = etree.Element('p')
+                p.text = child.text
+                section.append(p)
+            else:
+                raise UserWarning(
+                    '{}: Unexpected element in chapter: {}'.format(
+                        self.orig, child.tag))
 
         return section
 
@@ -1023,7 +1265,11 @@ class BiblexmlConverter(Converter):
 
         section.append(title)
 
-        for chapter_element in book_element.xpath('./chapter'):
+        for chapter_element in book_element:
+            if chapter_element.tag != 'chapter':
+                raise UserWarning(
+                    '{}: Unexpected element in book: {}'.format(
+                        self.orig, chapter_element.tag))
             section.append(self.process_chapter(chapter_element))
 
         return section
@@ -1061,10 +1307,22 @@ class HTMLContentConverter(Converter):
             processing_instructions=True,
             remove_unknown_tags=True,
             embedded=True,
-            remove_tags=['img', 'area', 'hr', 'cite', 'footer', 'figcaption',
-                         'aside', 'time', 'figure', 'nav', 'noscript', 'map',
-                         'ins',
-                         ])
+            remove_tags=[
+                'img',
+                'area',
+                'hr',
+                'cite',
+                'footer',
+                'figcaption',
+                'aside',
+                'time',
+                'figure',
+                'nav',
+                'noscript',
+                'map',
+                'ins',
+                's',
+                ])
 
         decoded = self.to_unicode(content)
         semiclean = self.remove_cruft(decoded)
@@ -1073,9 +1331,8 @@ class HTMLContentConverter(Converter):
         self.soup = html5parser.document_fromstring(superclean)
 
         self.convert2xhtml()
-        # with open('{}.huff.xml'.format(self.orig), 'wb') as huff:
-        #     util.print_element(etree.fromstring(self.soup), 0, 2, huff)
-
+        #with open('{}.huff.xml'.format(self.orig), 'wb') as huff:
+            #util.print_element(self.soup, 0, 2, huff)
 
         self.converter_xsl = os.path.join(here, 'xslt/xhtml2corpus.xsl')
 
@@ -1093,29 +1350,30 @@ class HTMLContentConverter(Converter):
                 self.try_decode_encodings(content)))
 
     def try_decode_encodings(self, content):
-        if type(content)==unicode:
+        if type(content) == unicode:
             return content
-        assert type(content)==str
+        assert type(content) == str
         found = self.get_encoding(content)
-        more_guesses = [ (c, 'guess')
-                         for c in ["utf-8", "windows-1252"]
-                         if c != found[0] ]
+        more_guesses = [(c, 'guess')
+                        for c in ["utf-8", "windows-1252"]
+                        if c != found[0]]
         errors = []
         for encoding, source in [found] + more_guesses:
             try:
                 decoded = unicode(content, encoding=encoding)
                 if source == 'guess':
                     with open('{}.log'.format(self.orig), 'w') as f:
-                        f.write("converter.py:{} Encoding of {} guessed as {}\n".format(
-                            util.lineno(), self.orig, encoding))
+                        f.write('converter.py: {} Encoding of {} guessed as '
+                                '{}\n'.format(util.lineno(), self.orig,
+                                              encoding))
                 return decoded
             except UnicodeDecodeError as e:
                 if source == 'xsl':
                     with open('{}.log'.format(self.orig), 'w') as f:
                         print >>f, util.lineno(), str(e), self.orig
                     raise ConversionException(
-                        'The text_encoding specified in {} lead to decoding errors, '
-                        'please fix the XSL'.format(self.md.filename))
+                        'The text_encoding specified in {} lead to decoding '
+                        'errors, please fix the XSL'.format(self.md.filename))
                 else:
                     errors.append(e)
         if errors != []:
@@ -1125,8 +1383,11 @@ class HTMLContentConverter(Converter):
             raise ConversionException(
                 "Strange exception converting {} to unicode".format(self.orig))
 
-    xml_encoding_declaration_re = re.compile(r"^<\?xml [^>]*encoding=[\"']([^\"']+)[^>]*\?>[ \r\n]*")
-    html_meta_charset_re = re.compile(r"<meta [^>]*[\"; ]charset=[\"']?([^\"' ]+)")
+    xml_encoding_declaration_re = re.compile(
+        r"^<\?xml [^>]*encoding=[\"']([^\"']+)[^>]*\?>[ \r\n]*")
+    html_meta_charset_re = re.compile(
+        r"<meta [^>]*[\"; ]charset=[\"']?([^\"' ]+)")
+
     def get_encoding(self, content):
         encoding = 'utf-8'
         source = 'guess'
@@ -1140,9 +1401,9 @@ class HTMLContentConverter(Converter):
             # <meta http-equiv="Content-Type" content="charset=utf-8" />
             # <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
             # <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
-            m = ( re.search(self.xml_encoding_declaration_re, content)
-                  or
-                  re.search(self.html_meta_charset_re, content) )
+            m = (re.search(self.xml_encoding_declaration_re, content)
+                 or
+                 re.search(self.html_meta_charset_re, content))
             if m is not None:
                 encoding = m.group(1).lower()
         else:
@@ -1176,7 +1437,9 @@ class HTMLContentConverter(Converter):
 
         """
         superfluously_named_tags = self.soup.xpath(
-            "//html:fieldset | //html:legend | //html:article | //html:hgroup",
+            "//html:fieldset | //html:legend | //html:article | //html:hgroup "
+            "| //html:section | //html:dl | //html:dd | //html:dt"
+            "| //html:menu",
             namespaces={'html': 'http://www.w3.org/1999/xhtml'})
         for elt in superfluously_named_tags:
             elt.tag = '{http://www.w3.org/1999/xhtml}div'
@@ -1239,41 +1502,82 @@ class HTMLContentConverter(Converter):
         unwanted_classes_ids = {
             'div': {
                 'class': [
-                    'QuickNav', 'tabbedmenu', 'printContact', 'documentPaging',
+                    'QuickNav',
+                    'tabbedmenu',
+                    'printContact',
+                    'documentPaging',
+                    'post-footer',
+                    'documentInfoEm',
+                    'article-column',
+                    'nrk-globalfooter',
+                    'article-related',
+                    'outer-column',
+                    'article-ad',
+                    'article-bottom-element',
+                    'banner-element',
+                    'nrk-globalnavigation',
+                    'sharing',
+                    'ad',
+                    'meta',
+                    'authors',
+                    'articleImageRig',
+                    'btm_menu',
+                    'expandable',
+                    'toc',
+                    'titlepage',
+                    'container_full',
+                    'moduletable_oikopolut',
+                    "latestnews_uutisarkisto",
+                    'back_button',
+                    # regjeringen.no
+                    'breadcrumbs ',
                     'breadcrumbs',
-                    'breadcrumbs ',  # regjeringen.no
-                    'post-footer', 'documentInfoEm',
-                    'article-column', 'nrk-globalfooter', 'article-related',
-                    'outer-column', 'article-ad', 'article-bottom-element',
-                    'banner-element', 'nrk-globalnavigation', 'sharing', 'ad',
-                    'meta', 'authors', 'articleImageRig',  'btm_menu',
-                    'expandable', 'toc', 'titlepage',
-                    'container_full', 'moduletable_oikopolut',
-                    "latestnews_uutisarkisto", 'back_button',
-                    'breadcrums span-12',       # svenskakyrkan.se
-                    'tipsarad mt6 selfClear',   # svenskakyrkan.se
-                    'imagecontainer',           # regjeringen.no
+                    'imagecontainer',
+                    # svenskakyrkan.se
+                    'breadcrums span-12',
+                    'tipsarad mt6 selfClear',
+                    # lovdata.no
+                    'sidebar',
+                    'ld-navbar',
+                    'fixed-header',
+                    'innholdsfortegenlse-child',
+                    'metaWrapper',
+                    'help closed hidden-xs',
+
                     ],
                 'id': [
-                    'pageFooter',               # svenskakyrkan.se
-                    'headerBar',                # svenskakyrkan.se
-                    'leftmenu',                 # svenskakyrkan.se
-                    'rightside',                # svenskakyrkan.se
-                    'readspeaker_button1',      # svenskakyrkan.se
                     'searchBox',
                     'murupolku',                # www.samediggi.fi
                     'main_navi_main',           # www.samediggi.fi
                     'ctl00_FullRegion_CenterAndRightRegion_Sorting_sortByDiv',
                     'ctl00_FullRegion_CenterAndRightRegion_HitsControl_'
                     'searchHitSummary',
-                    'AreaTopSiteNav', 'SamiDisclaimer', 'AreaTopRight',
-                    'AreaLeft', 'AreaRight', 'ShareArticle', 'tipafriend',
-                    'AreaLeftNav', 'PageFooter', 'blog-pager',
-                    'NAVheaderContainer', 'NAVbreadcrumbContainer',
-                    'NAVsubmenuContainer', 'NAVrelevantContentContainer',
-                    'NAVfooterContainer', 'sidebar-wrapper', 'footer-wrapper',
-                    'share-article', 'topUserMenu', 'rightAds', 'menu', 'aa',
-                    'sidebar', 'footer', 'chatBox', 'sendReminder',
+                    'AreaTopSiteNav',
+                    'SamiDisclaimer',
+                    'AreaTopRight',
+                    'AreaLeft',
+                    'AreaRight',
+                    'ShareArticle',
+                    'tipafriend',
+                    'AreaLeftNav',
+                    'PageFooter',
+                    'blog-pager',
+                    'NAVheaderContainer',
+                    'NAVbreadcrumbContainer',
+                    'NAVsubmenuContainer',
+                    'NAVrelevantContentContainer',
+                    'NAVfooterContainer',
+                    'sidebar-wrapper',
+                    'footer-wrapper',
+                    'share-article',
+                    'topUserMenu',
+                    'rightAds',
+                    'menu',
+                    'aa',
+                    'sidebar', # finlex.fi, too
+                    'footer',
+                    'chatBox',
+                    'sendReminder',
                     'ctl00_MidtSone_ucArtikkel_ctl00_divNavigasjon',
                     'ctl00_MidtSone_ucArtikkel_ctl00_ctl00_ctl01_divRessurser',
                     'leftPanel',
@@ -1282,34 +1586,76 @@ class HTMLContentConverter(Converter):
                     'article_footer',
                     'rightCol',
                     'PrintDocHead',
+                    # lovdata.no
+                    'deleModal',
+                    # svenskakyrkan.se
+                    'pageFooter',
+                    'headerBar',
+                    'leftmenu',
+                    'rightside',
+                    'readspeaker_button1',
+                    # finlex.fi
+                    'header',
+                    'document-header',
+                    'breadcrumbs-bottom',
+                    'sitemap',
                     ],
                 },
             'p': {
-                'class': ['WebPartReadMoreParagraph', 'breadcrumbs'],
+                'class': [
+                    'WebPartReadMoreParagraph',
+                    'breadcrumbs'
+                    ],
                 },
             'ul': {
-                'id': ['AreaTopPrintMeny', 'AreaTopLanguageNav'],
-                'class': ['QuickNav', 'article-tools', 'byline']
+                'id': [
+                    'AreaTopPrintMeny',
+                    'AreaTopLanguageNav'
+                    ],
+                'class': [
+                    'QuickNav',
+                    'article-tools',
+                    'byline',
+                    # lovdata.no
+                    'chapter-index',
+                    'footer-nav',
+                    ],
                 },
             'span': {
-                'id': ['skiplinks'],
+                'id': [
+                    'skiplinks'
+                    ],
                 'class': [
                     'K-NOTE-FOTNOTE',
-                    'graytext',     # svenskakyrkan.se
+                    # svenskakyrkan.se
+                    'graytext',
                     ],
                 },
             'a': {
-                'id': ['leftPanelTab', ],
+                'id': [
+                    'leftPanelTab',
+                    ],
                 'class': [
                     'mainlevel',
+                    # lovdata.no
+                    'share-paragraf',
                     ],
                 },
             'td': {
-                'id': ["paavalikko_linkit", "hakulomake", 'sg_oikea'],
-                'class': ["modifydate"],
+                'id': [
+                    "paavalikko_linkit",
+                    "hakulomake",
+                    'sg_oikea',
+                    ],
+                'class': [
+                    "modifydate",
+                    ],
                 },
             'tr': {
-                'id': ["sg_ylaosa1", "sg_ylaosa2"]
+                'id': [
+                    "sg_ylaosa1",
+                    "sg_ylaosa2",
+                    ]
                 },
             }
 
@@ -1455,6 +1801,7 @@ class HTMLConverter(HTMLContentConverter):
     def __init__(self, filename, write_intermediate=False):
         f = open(filename)
         super(HTMLConverter, self).__init__(filename,
+                                            write_intermediate,
                                             content=f.read())
         f.close()
 
@@ -1473,9 +1820,9 @@ class RTFConverter(HTMLContentConverter):
             raise ConversionException('Unicode problems in {}'.format(
                 self.orig))
 
-        HTMLContentConverter.__init__(self, filename,
-                                      content=XHTMLWriter.write(doc, pretty=True).read())
-
+        HTMLContentConverter.__init__(
+            self, filename,
+            content=XHTMLWriter.write(doc, pretty=True).read())
 
 
 class DocxConverter(HTMLContentConverter):
@@ -1487,18 +1834,22 @@ class DocxConverter(HTMLContentConverter):
                                       content=Docx2Html(path=filename).parsed)
 
 
-
 class DocConverter(HTMLContentConverter):
     """
     Class to convert Microsoft Word documents to the giellatekno xml format
     """
     def __init__(self, filename, write_intermediate=False):
-        command = ['wvHtml', filename, '-']
-        output = run_process(command, filename)
+        Converter.__init__(self, filename, write_intermediate)
+        command = ['wvHtml',
+                   os.path.realpath(filename),
+                   '-']
+        if not os.path.exists(self.get_tmpdir()):
+            # wvHtml leaves a mess in cwd
+            os.mkdir(self.get_tmpdir())
+        output = run_process(command, filename, cwd=self.get_tmpdir())
 
         HTMLContentConverter.__init__(self, filename,
                                       content=output)
-
 
     def fix_wv_output(self):
         '''Examples of headings
@@ -2226,7 +2577,7 @@ class LanguageDetector(object):
 class ConverterManager(object):
     '''Manage the conversion of original files to corpus xml
     '''
-    LANGUAGEGUESSER = text_cat.Classifier()
+    LANGUAGEGUESSER = text_cat.Classifier(None)
     FILES = []
 
     def __init__(self, write_intermediate):
@@ -2256,7 +2607,7 @@ class ConverterManager(object):
                 orig_file, write_intermediate=self._write_intermediate)
 
         elif orig_file.endswith('.pdf'):
-            return PDFConverter(
+            return PDF2XMLConverter(
                 orig_file, write_intermediate=self._write_intermediate)
 
         elif orig_file.endswith('.svg'):

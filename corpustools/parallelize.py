@@ -20,6 +20,8 @@
 #   Copyright 2011-2014 Børre Gaup <borre.gaup@uit.no>
 #
 
+from __future__ import unicode_literals
+
 import os
 import errno
 import re
@@ -40,6 +42,9 @@ import generate_anchor_list
 
 here = os.path.dirname(__file__)
 
+def note(msg):
+    print >>sys.stderr, msg.encode('utf-8')
+
 
 class CorpusXMLFile:
     """
@@ -54,7 +59,7 @@ class CorpusXMLFile:
         self.sanity_check()
 
     def sanity_check(self):
-        if self.root.tag != u"document":
+        if self.root.tag != "document":
             raise util.ArgumentError(
                 "Expected Corpus XML file (output of convert2xml) with "
                 "<document> as the root tag, got {} -- did you pass the "
@@ -82,6 +87,13 @@ class CorpusXMLFile:
         """
         return os.path.basename(self.name)
 
+    def get_basename_noext(self):
+        """
+        Return the basename of the file without the final .xml
+        """
+        root, _ = os.path.splitext(self.get_basename())
+        return root
+
     def get_lang(self):
         """
         Get the lang of the file
@@ -95,21 +107,21 @@ class CorpusXMLFile:
             return word_count.text
 
     def get_genre(self):
-        u"""
+        """
         @brief Get the genre from the xml file
 
         :returns: the genre as set in the xml file
         """
-        if self.root.find(u".//genre") is not None:
-            return self.root.find(u".//genre").attrib[u"code"]
+        if self.root.find(".//genre") is not None:
+            return self.root.find(".//genre").attrib["code"]
 
     def get_ocr(self):
-        u"""
+        """
         @brief Check if the ocr element exists
 
         :returns: the ocr element or None
         """
-        return self.root.find(u".//ocr")
+        return self.root.find(".//ocr")
 
     def get_parallel_basename(self, paralang):
         """
@@ -126,13 +138,17 @@ class CorpusXMLFile:
         """
         Infer the absolute path of the parallel file
         """
-        parallel_dirname = self.get_dirname().replace(
-            self.get_lang(), paralang)
-        if self.get_parallel_basename(paralang) is not None:
-            parallel_basename = '{}.xml'.format(
-                self.get_parallel_basename(paralang))
+        if self.get_parallel_basename(paralang) is None:
+            return None
+        root, module, lang, genre, subdirs, _ = util.split_path(self.get_name())
+        parallel_basename = '{}.xml'.format(
+            self.get_parallel_basename(paralang))
+        return apply(
+            os.path.join,
+            [root, module, paralang, genre, subdirs,
+             parallel_basename]
+        )
 
-            return os.path.join(parallel_dirname, parallel_basename)
 
     def get_original_filename(self):
         """
@@ -185,7 +201,7 @@ class CorpusXMLFile:
         '''Replace the body element with new_body element
         '''
         if new_body.tag == 'body':
-            oldbody = self.etree.find(u'.//body')
+            oldbody = self.etree.find('.//body')
             oldbody.getparent().replace(oldbody, new_body)
 
     def write(self, file_name=None):
@@ -195,7 +211,7 @@ class CorpusXMLFile:
             file_name = self.get_name()
 
         self.etree.write(file_name,
-                         encoding=u'utf8',
+                         encoding='utf8',
                          pretty_print=True,
                          xml_declaration=True)
 
@@ -231,6 +247,11 @@ class SentenceDivider:
         in_file.remove_skip()
         self.input_etree = in_file.get_etree()
 
+    def in_main_lang(self, elt):
+        return self.doc_lang == elt.attrib.get(
+            '{http://www.w3.org/XML/1998/namespace}lang',
+            self.doc_lang)
+
     def process_all_paragraphs(self):
         """Go through all paragraphs in the etree and process them one by one.
         """
@@ -238,8 +259,17 @@ class SentenceDivider:
         body = etree.Element('body')
         self.document.append(body)
 
-        for paragraph in self.input_etree.findall('//p'):
-            body.append(self.process_one_paragraph(paragraph))
+        elts_doc_lang = filter(self.in_main_lang,
+                             self.input_etree.findall('//p'))
+        processed = self.process_elts(elts_doc_lang)
+        body.extend(processed)
+
+    def process_elts(self, elts):
+        para_texts = ("".join(elt.xpath('.//text()'))
+                      for elt in elts)
+        preprocessed = self.preprocess_para_texts(para_texts)
+        return map(self.process_one_para_text,
+                   preprocessed)
 
     def write_result(self, outfile):
         """Write self.document to the given outfile name
@@ -259,7 +289,20 @@ class SentenceDivider:
                  xml_declaration=True)
         f.close()
 
-    def get_preprocess_output(self, preprocess_input):
+    def preprocess_para_texts(self, para_texts):
+        """Run a list of paragraphs through preprocess.
+        """
+        # Temporarily intersperse an XML tag <SKIP/> between
+        # paragraphs so that we can use just one call to preprocess,
+        # but still have them split at the right points.
+        replacements = [("<", "&lt;"),
+                        (">", "&gt;"),
+                        ('\n', ' '),]
+        sanitized = (util.replace_all(replacements, p)
+                     for p in para_texts)
+        return self.ext_preprocess("\n<SKIP/>".join(sanitized)).split("<SKIP/>")
+
+    def ext_preprocess(self, preprocess_input):
         """Send the text in preprocess_input into preprocess, return the
         result.
         If the process fails, exit the program
@@ -271,7 +314,7 @@ class SentenceDivider:
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         (output, error) = subp.communicate(
-            preprocess_input.encode('utf-8').replace('\n', ' '))
+            preprocess_input.encode('utf-8'))
 
         if subp.returncode != 0:
             print >>sys.stderr, 'Could not divide into sentences'
@@ -279,56 +322,49 @@ class SentenceDivider:
             print >>sys.stderr, error
             sys.exit()
         else:
-            return output
+            return output.decode('utf-8')
 
-    def process_one_paragraph(self, orig_paragraph):
-        """Run the content of the orig_paragraph through preprocess,
-        make sentences
-        Return a new paragraph containing the marked up sentences
+    pseudosent_re = re.compile(r"^[\W|\s]*$")
+
+    def process_one_para_text(self, para_text):
+        """Make sentences from the output of preprocess.
+        Return a new paragraph containing the marked up sentences.
         """
         new_paragraph = etree.Element("p")
 
-        all_text = orig_paragraph.xpath('.//text()')
-        preprocess_input = "".join(all_text)
+        sentence = []
+        incomplete_sentences = ['.', '?', '!', ')', ']', '...', '…',
+                                '"', '»', '”', '°', '', ':']
+        words = para_text.split('\n')
+        i = 0
+        while i < len(words):
+            word = words[i].strip()
 
-        # Check if there is any text from preprocess
-        if (preprocess_input):
-            output = self.get_preprocess_output(preprocess_input)
-            sentence = []
-            incomplete_sentences = ['.', '?', '!', ')', ']', '...', '…', '"',
-                                    '»', '”', '°', '', ':']
-            words = output.split('\n')
-            i = 0
-            while i < len(words):
-                word = words[i].strip()
+            # If word exists in typos, replace it with the correction
+            if word in self.typos:
+                word = self.typos[word]
 
-                # If word exists in typos, replace it with the correction
-                if word in self.typos:
-                    word = self.typos[word]
+            sentence.append(word)
+            if word in ['.', '?', '!']:
+                while (i + 1 < len(words) and
+                       words[i + 1].strip() in incomplete_sentences):
+                    if words[i + 1] != '':
+                        sentence.append(words[i + 1].strip())
+                    i = i + 1
 
-                sentence.append(word.decode('utf-8'))
-                if (word == '.' or word == '?' or word == '!'):
-                    while (i + 1 < len(words) and
-                           words[i + 1].strip() in incomplete_sentences):
-                        if words[i + 1] != '':
-                            sentence.append(
-                                words[i + 1].decode('utf-8').strip())
-                        i = i + 1
+                # exclude pseudo-sentences, i.e. sentences that
+                # don't contain any alphanumeric characters
+                if not self.pseudosent_re.match(' '.join(sentence)):
+                    new_paragraph.append(self.make_sentence(sentence))
+                sentence = []
 
-                    # exclude pseudo-sentences, i.e. sentences that
-                    # don't contain any alphanumeric characters
-                    if not re.compile(
-                            r"^[\W|\s]*$").match(' '.join(sentence)):
-                        new_paragraph.append(self.make_sentence(sentence))
-                    sentence = []
+            i = i + 1
 
-                i = i + 1
-
-            # exclude pseudo-sentences, i.e. sentences that don't contain
-            # any alphanumeric characters
-            if (len(sentence) > 1 and not
-                    re.compile(r"^[\W|\s]*$").match(' '.join(sentence))):
-                new_paragraph.append(self.make_sentence(sentence))
+        # exclude pseudo-sentences, i.e. sentences that don't contain
+        # any alphanumeric characters
+        if (len(sentence) > 1
+            and not self.pseudosent_re.match(' '.join(sentence))):
+            new_paragraph.append(self.make_sentence(sentence))
 
         return new_paragraph
 
@@ -360,7 +396,7 @@ class Parallelize:
     The other file is found via the metadata in the input file
     """
 
-    def __init__(self, origfile1, lang2):
+    def __init__(self, origfile1, lang2, quiet=False):
         """
         Set the original file name, the lang of the original file and the
         language that it should parallellized with.
@@ -371,15 +407,34 @@ class Parallelize:
         self.origfiles.append(CorpusXMLFile(
             os.path.abspath(origfile1)))
 
-        if self.origfiles[0].get_parallel_filename(lang2) is not None:
-            self.origfiles.append(CorpusXMLFile(
-                self.origfiles[0].get_parallel_filename(lang2)))
+        para_file = self.origfiles[0].get_parallel_filename(lang2)
+        if para_file is not None:
+            self.origfiles.append(CorpusXMLFile(para_file))
         else:
             raise IOError("{} doesn't have a parallel file in {}".format(
                 origfile1, lang2))
 
+        self.consistency_check(self.origfiles[1], self.origfiles[0])
+
         if self.is_translated_from_lang2():
             self.reshuffle_files()
+
+        self.quiet = quiet
+
+    def consistency_check(self, f0, f1):
+        """
+        Warn if parallel_text of f0 is not f1
+        """
+        lang1 = f1.get_lang()
+        para0 = f0.get_parallel_basename(lang1)
+        base1 = f1.get_basename_noext()
+        if para0 != base1:
+            if para0 is None:
+                note("WARNING: {} missing from {} parallel_texts in {}!".format(
+                    base1, lang1, f0.get_name()))
+            else:
+                note("WARNING: {}, not {}, in {} parallel_texts of {}!".format(
+                    para0, base1, lang1, f0.get_name()))
 
     def reshuffle_files(self):
         """
@@ -388,6 +443,24 @@ class Parallelize:
         tmp = self.origfiles[0]
         self.origfiles[0] = self.origfiles[1]
         self.origfiles[1] = tmp
+
+    def get_outfile_name(self):
+        """
+        Compute the name of the final tmx file
+        """
+
+        orig_path_part = '/converted/{}/'.format(self.origfiles[0].get_lang())
+        # First compute the part that shall replace /orig/ in the path
+        replace_path_part = '/toktmx/{}2{}/'.format(
+            self.origfiles[0].get_lang(),
+            self.origfiles[1].get_lang())
+        # Then set the outdir
+        out_dirname = self.origfiles[0].get_dirname().replace(
+            orig_path_part, replace_path_part)
+        # Replace xml with tmx in the filename
+        out_filename = self.origfiles[0].get_basename_noext() + '.toktmx'
+
+        return os.path.join(out_dirname, out_filename)
 
     def get_filelist(self):
         """
@@ -427,7 +500,8 @@ class Parallelize:
         gal = generate_anchor_list.GenerateAnchorList(
             self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
         gal.generate_file([
-            os.path.join(os.environ['GTHOME'], 'gt/common/src/anchor.txt')])
+            os.path.join(os.environ['GTHOME'], 'gt/common/src/anchor.txt')],
+                          quiet=self.quiet)
 
         # Return the absolute path of the resulting file
         return os.path.abspath(gal.get_outfile())
@@ -454,7 +528,7 @@ class Parallelize:
         Compute a name for the corpus-analyze output and tca2 input file
         Input is a CorpusXMLFile
         """
-        origfilename = pfile.get_basename().replace('.xml', '')
+        origfilename = pfile.get_basename_noext()
         return os.path.join(os.environ['GTFREE'], 'tmp',
                             '{}{}_sent.xml'.format(
                                 origfilename, pfile.get_lang()))
@@ -468,16 +542,19 @@ class Parallelize:
 
         anchor_name = self.generate_anchor_file()
 
-        subp = subprocess.Popen(['java',
-                                 '-Xms512m', '-Xmx1024m',
-                                 '-jar',
-                                 tca2_jar,
-                                 '-cli',
-                                 '-anchor={}'.format(anchor_name),
-                                 '-in1={}'.format(self.get_sent_filename(
-                                     self.get_filelist()[0])),
-                                 '-in2={}'.format(self.get_sent_filename(
-                                     self.get_filelist()[1]))],
+        command = ['java',
+                   '-Xms512m', '-Xmx1024m',
+                   '-jar',
+                   tca2_jar,
+                   '-cli',
+                   '-anchor={}'.format(anchor_name),
+                   '-in1={}'.format(self.get_sent_filename(
+                       self.get_filelist()[0])),
+                   '-in2={}'.format(self.get_sent_filename(
+                       self.get_filelist()[1]))]
+        if not self.quiet:
+            print "Running tca2 aligner ..."
+        subp = subprocess.Popen(command,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         (output, error) = subp.communicate()
@@ -507,7 +584,7 @@ class Tmx:
         self.tmx = tmx
 
         # TODO: not actually used apart from in tests, remove?
-        # self.language_guesser = text_cat.Classifier()
+        # self.language_guesser = text_cat.Classifier(None)
 
     def get_src_lang(self):
         """
@@ -759,7 +836,7 @@ class Tca2ToTmx(Tmx):
         tuv = etree.Element("tuv")
         tuv.attrib["{http://www.w3.org/XML/1998/namespace}lang"] = lang
         seg = etree.Element("seg")
-        seg.text = self.remove_s_tag(line).strip().decode("utf-8")
+        seg.text = self.remove_s_tag(line).strip()
         tuv.append(seg)
 
         return tuv
@@ -789,25 +866,6 @@ class Tca2ToTmx(Tmx):
 
         return line
 
-    def get_outfile_name(self):
-        """
-        Compute the name of the tmx file
-        """
-
-        orig_path_part = '/converted/{}/'.format(self.filelist[0].get_lang())
-        # First compute the part that shall replace /orig/ in the path
-        replace_path_part = '/toktmx/{}2{}/'.format(
-            self.filelist[0].get_lang(),
-            self.filelist[1].get_lang())
-        # Then set the outdir
-        out_dirname = self.filelist[0].get_dirname().replace(
-            orig_path_part, replace_path_part)
-        # Replace xml with tmx in the filename
-        out_filename = self.filelist[0].get_basename().replace('.xml',
-                                                               '.toktmx')
-
-        return os.path.join(out_dirname, out_filename)
-
     def set_tmx(self):
         """
         Make tmx file based on the two output files of tca2
@@ -834,9 +892,7 @@ class Tca2ToTmx(Tmx):
         text = ""
         pfile_name = self.get_sent_filename(pfile).replace('.xml', '_new.txt')
         try:
-            f = open(pfile_name, "r")
-            text = f.readlines()
-            f.close()
+            text = open(pfile_name, "r").read().decode('utf-8').split('\n')
         except IOError as e:
             print "I/O error({0}): {1}".format(e.errno, e.strerror)
             sys.exit(1)
@@ -848,7 +904,7 @@ class Tca2ToTmx(Tmx):
         Compute a name for the corpus-analyze output and tca2 input file
         Input is a CorpusXMLFile
         """
-        origfilename = pfile.get_basename().replace('.xml', '')
+        origfilename = pfile.get_basename_noext()
         return (os.path.join(
             os.environ['GTFREE'], 'tmp',
             '{}{}_sent.xml'.format(origfilename, pfile.get_lang())))
@@ -1210,10 +1266,17 @@ def parse_options():
         containing the main language, and language to parallelize it with.')
 
     parser.add_argument('input_file', help="The input file")
+    parser.add_argument('-f', '--force',
+                        help="Overwrite output file if it already exists."
+                        "The default is to skip parallelizing existing files.",
+                        action="store_true")
+    parser.add_argument('-q', '--quiet',
+                        help="Don't mention anything out of the ordinary.",
+                        action="store_true")
     parser.add_argument('-p', '--parallel_language',
                         dest='parallel_language',
-                        help="The language to parallelize the input \
-                        document with",
+                        help="The language to parallelize the input "
+                        "document with",
                         required=True)
 
     args = parser.parse_args()
@@ -1224,25 +1287,37 @@ def main():
     args = parse_options()
 
     try:
-        parallelizer = Parallelize(args.input_file, args.parallel_language)
+        parallelizer = Parallelize(args.input_file,
+                                   args.parallel_language,
+                                   args.quiet)
     except IOError as e:
         print e.message
         sys.exit(1)
 
-    print "Aligning {} and its parallel {} file".format(
-        args.input_file, args.parallel_language)
-    print "Adding sentence structure that tca2 needs …"
+    outfile = parallelizer.get_outfile_name()
+    if os.path.exists(outfile):
+        if args.force:
+            print "{} already exists, overwriting!".format(outfile)
+        else:
+            print "{} already exists, skipping ...".format(outfile)
+            sys.exit(1)
+
+    if not args.quiet:
+        print "Aligning {} and its parallel file".format(args.input_file)
+        print "Adding sentence structure that tca2 needs …"
     if parallelizer.divide_p_into_sentences() == 0:
-        print "Aligning files …"
+        if not args.quiet:
+            print "Aligning files …"
         if parallelizer.parallelize_files() == 0:
             tmx = Tca2ToTmx(parallelizer.get_filelist())
 
-            o_path, o_file = os.path.split(tmx.get_outfile_name())
+            o_path, o_file = os.path.split(outfile)
             o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
             try:
                 os.makedirs(o_rel_path)
             except OSError, e:
                 if e.errno != errno.EEXIST:
                     raise
-            print "Generating the tmx file {}".format(tmx.get_outfile_name())
-            tmx.write_tmx_file(tmx.get_outfile_name())
+            if not args.quiet:
+                print "Generating the tmx file {}".format(outfile)
+            tmx.write_tmx_file(outfile)

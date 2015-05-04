@@ -22,6 +22,7 @@ from __future__ import unicode_literals
 import os
 import operator
 import inspect
+import platform
 
 
 class SetupException(Exception):
@@ -50,6 +51,26 @@ def replace_all(replacements, string):
     return reduce(lambda a, kv: a.replace(*kv),
                   replacements,
                   string)
+
+def split_path(path):
+    """
+    Split an absolute path into useful components:
+    (root, module, lang, genre, subdirs, basename)
+    """
+    def split_on_module(p):
+        for module in ["orig", "converted", "prestable", "stable"]: # toktmx?
+            d = "/"+module+"/"
+            if d in p:
+                root, rest = p.split(d)
+                return root, module, rest
+    # Ensure we have at least one / before module, for safer splitting:
+    abspath = os.path.normpath(os.path.abspath(path))
+    root, module, lang_etc = split_on_module(abspath)
+    l = lang_etc.split("/")
+    lang, genre, subdirs, basename = l[0], l[1], l[2:-1], l[-1]
+    return root, module, lang, genre, "/".join(subdirs), basename
+
+
 
 
 def is_executable(fullpath):
@@ -101,13 +122,9 @@ def get_preprocess_command(lang):
     sanity_check([preprocess_script])
     abbr_fb = get_lang_resource("sme", 'tools/preprocess/abbr.txt')
     abbr = get_lang_resource(lang, 'tools/preprocess/abbr.txt', abbr_fb)
-    corr = get_lang_resource(lang, 'src/syntax/corr.txt')
-    args = ["--{}={}".format(opt, path)
-            for opt, path in [('abbr', abbr),
-                              ('corr', corr)]
-            if path is not None]
-    return [preprocess_script] + args
-
+    return [preprocess_script,
+            "--xml",
+            "--abbr={}".format(abbr)]
 
 def lineno():
     """Returns the current line number in our program."""
@@ -130,23 +147,46 @@ def print_element(element, level, indent, out):
     tag = element.tag.replace('{http://www.w3.org/1999/xhtml}', 'html:')
 
     out.write(' ' * (level * indent))
-    out.write('<%s' % tag)
+    out.write('<{}'.format(tag))
 
     for k, v in element.attrib.items():
-        out.write(' %s="%s"' % (k.encode('utf8'), v.encode('utf8')))
+        out.write(' ')
+        if isinstance(k, unicode):
+            out.write(k.encode('utf8'))
+        else:
+            out.write(k)
+        out.write('="')
+        if isinstance(v, unicode):
+            out.write(v.encode('utf8'))
+        else:
+            out.write(v)
+        out.write('"')
     out.write('>\n')
 
     if element.text is not None and element.text.strip() != '':
         out.write(' ' * ((level + 1) * indent))
-        out.write('%s\n' % element.text.strip().encode('utf8'))
+        if isinstance(element.text, unicode):
+            out.write(element.text.strip().encode('utf8'))
+        else:
+            out.write(element.text.strip())
+        out.write('\n')
 
     for child in element:
         print_element(child, level + 1, indent, out)
 
     out.write(' ' * (level * indent))
-    out.write('</%s>\n' % tag)
+    out.write('</{}>\n'.format(tag))
 
     if level > 0 and element.tail is not None and element.tail.strip() != '':
         for _ in range(0, (level - 1) * indent):
             out.write(' ')
-        out.write('%s\n' % element.tail.strip().encode('utf8'))
+        out.write('{}\n'.format(element.tail.strip().encode('utf8')))
+
+
+def name_to_unicode(filename):
+    if platform.system() == 'Windows':
+        return filename
+    else:
+        return filename.decode('utf-8')
+
+
