@@ -1,1 +1,1 @@
-<*.{ml,mli,byte,native}>: package(cohttp.lwt lwt.ppx re.perl)
+<*.{ml,mli,byte,native}>: package(cohttp.lwt lwt.ppx re.perl uutf uucp)
