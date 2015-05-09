@@ -153,7 +153,7 @@ module Sdcrawl = struct
     (* Any that are missing redirects, we try to download with the
        /switchlanguage/ to see if we get something useful -- not doing
        this currently since it seems the wget spidering got it all. *)
-    let todo = UMap.fold (fun u1 lmap acc ->
+    let toswitch = UMap.fold (fun u1 lmap acc ->
         print_endline u1;LMap.iter (fun l u2 -> fmt "%s %s %s\n" u1 (Lang.to_string l) u2) lmap;
         Lang.langs |> List.fold_left (fun acc lang ->
             if LMap.mem lang lmap then
@@ -162,8 +162,8 @@ module Sdcrawl = struct
               (u1, lang, switchback u1 lang) :: acc
           ) acc
       ) map [] in
-    let%lwt redirected = todo |> Lwt_list.map_s (fun (u1, lang, uswitch) -> Redir.location_of_string uswitch) in
-    let redirects = List.combine todo redirected
+    let%lwt redirected = toswitch |> Lwt_list.map_s (fun (u1, lang, uswitch) -> Redir.location_of_string uswitch) in
+    let redirects = List.combine toswitch redirected
                     |> List.filter (fun ((u1,l,_),res) ->
                         match res with
                         | None -> false
@@ -192,35 +192,36 @@ module Sdcrawl = struct
 
   let quote_list l = List.map (fun s -> "'"^s^"'") l |> String.concat " "
 
+  let genre = "admin/sd/samediggi.no"
+
   let add_cmd name lang url =
-    sp "add_files_to_corpus --rename \"%s\" . %s admin/sd/samediggi.no '%s'\n" name (Lang.to_string lang) url
+    sp "add_files_to_corpus --rename \"%s\" . %s %s '%s'\n" name (Lang.to_string lang) genre url
+
+  let name_with_path name lang =
+    sp "orig/%s/%s/%s" (Lang.to_string lang) genre name
 
   let proc_stream () =
     let input = Lwt_io.read_lines (Lwt_io.of_fd Lwt_io.input Lwt_unix.stdin) in
     let%lwt map = Lwt_stream.fold_s (fun l m -> return (proc_line_map l m)) input UMap.empty in
     begin
       UMap.iter (fun u1 lmap ->
-          if LMap.is_empty lmap then () else begin
+          if LMap.is_empty lmap then ()
+          else if LMap.cardinal lmap != 3 then
+            fmt "Warning: found %d langs for %s, expected 3" (LMap.cardinal lmap) u1
+            (* If this ever happens, we have to try the redirect thing instead *)
+          else begin
             let n1 = name_of u1 in
             print_string (add_cmd n1 Lang.Lsme u1);
-            let names = [n1] |> LMap.fold (fun l2 u2 names ->
+            let names = [name_with_path n1 Lang.Lsme] |> LMap.fold (fun l2 u2 names ->
                 let n2 = name_of u2 in
                 print_string (add_cmd n2 l2 u2);
-                n2::names) lmap
+                (name_with_path n2 l2)::names) lmap
             in
-            (* TODO: names need orig/lang/genre/ prefixed *)
             fmt "rogganreaiddut/para-all.sh %s\n" @@ quote_list names
           end) map;
       return ()
     end
 
-  let examples = [ "http://www.samediggi.no/switchlanguage/to/lulesamisk/Biras-areala-ja-kultursuodjaleapmi/Kulturmuittut/Sami-kulturmuittut-min-arbi-boahtteaigai";
-                   "http://www.samediggi.no/";
-                 ]
-  let proc_examples () =
-    let%lwt results = Lwt_list.map_s Redir.location_of_string examples in
-    List.iter (function Some r -> print_endline r | None -> ()) results;
-    return ()
 end
 
 let () =
