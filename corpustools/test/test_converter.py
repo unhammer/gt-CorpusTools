@@ -36,40 +36,40 @@ class TestConverter(unittest.TestCase):
 
     def test_get_orig(self):
         self.assertEqual(
-            self.converter_inside_orig.get_orig(),
+            self.converter_inside_orig.orig,
             os.path.join(
                 here,
                 'converter_data/fakecorpus/orig/nob/samediggi-article-'
                 '16.html'))
 
         self.assertEqual(
-            self.converter_outside_orig.get_orig(),
+            self.converter_outside_orig.orig,
             os.path.join(
                 here,
                 'converter_data/samediggi-article-48.html'))
 
         self.assertEqual(
-            self.converter_inside_freecorpus.get_orig(),
+            self.converter_inside_freecorpus.orig,
             os.path.join(
                 os.getenv('GTFREE'),
                 'orig/sme/admin/sd/samediggi.no/samediggi-article-48.html'))
 
     def test_get_xsl(self):
         self.assertEqual(
-            self.converter_inside_orig.get_xsl(),
+            self.converter_inside_orig.xsl,
             os.path.join(
                 here,
                 'converter_data/fakecorpus/orig/nob/samediggi-'
                 'article-16.html.xsl'))
 
         self.assertEqual(
-            self.converter_outside_orig.get_xsl(),
+            self.converter_outside_orig.xsl,
             os.path.join(
                 here,
                 'converter_data/samediggi-article-48.html.xsl'))
 
         self.assertEqual(
-            self.converter_inside_freecorpus.get_xsl(),
+            self.converter_inside_freecorpus.xsl,
             os.path.join(
                 os.getenv('GTFREE'),
                 'orig/sme/admin/sd/samediggi.no/samediggi-article-'
@@ -77,39 +77,39 @@ class TestConverter(unittest.TestCase):
 
     def test_get_tmpdir(self):
         self.assertEqual(
-            self.converter_inside_orig.get_tmpdir(),
+            self.converter_inside_orig.tmpdir,
             os.path.join(
                 here,
                 'converter_data/fakecorpus/tmp'))
 
         self.assertEqual(
-            self.converter_outside_orig.get_tmpdir(),
+            self.converter_outside_orig.tmpdir,
             os.path.join(
                 here, 'converter_data'))
 
         self.assertEqual(
-            self.converter_inside_freecorpus.get_tmpdir(),
+            self.converter_inside_freecorpus.tmpdir,
             os.path.join(os.getenv('GTFREE'), 'tmp'))
 
     def test_get_corpusdir(self):
         self.assertEqual(
-            self.converter_inside_orig.get_corpusdir().rstrip(os.path.sep),
+            self.converter_inside_orig.corpusdir.rstrip(os.path.sep),
             os.path.join(
                 here,
                 'converter_data/fakecorpus'))
 
         self.assertEqual(
-            self.converter_outside_orig.get_corpusdir().rstrip(os.path.sep),
+            self.converter_outside_orig.corpusdir.rstrip(os.path.sep),
             os.path.join(here, 'converter_data'))
 
         self.assertEqual(
-            self.converter_inside_freecorpus.get_corpusdir().rstrip(
+            self.converter_inside_freecorpus.corpusdir.rstrip(
                 os.path.sep),
             os.getenv('GTFREE').rstrip(os.path.sep))
 
     def test_get_converted_name_inside_orig(self):
         self.assertEqual(
-            self.converter_inside_orig.get_converted_name(),
+            self.converter_inside_orig.converted_name,
             os.path.join(
                 here,
                 'converter_data/fakecorpus/converted/nob/samediggi-'
@@ -117,19 +117,26 @@ class TestConverter(unittest.TestCase):
 
     def test_get_converted_name_outside_orig(self):
         self.assertEqual(
-            self.converter_outside_orig.get_converted_name(),
+            self.converter_outside_orig.converted_name,
             os.path.join(
                 here,
                 'converter_data/samediggi-article-48.html.xml'))
 
     def test_get_converted_inside_freecorpus(self):
         self.assertEqual(
-            self.converter_inside_freecorpus.get_converted_name(),
+            self.converter_inside_freecorpus.converted_name,
             os.path.join(
                 os.getenv('GTFREE'),
                 'converted/sme/admin/sd/samediggi.no/samediggi-'
                 'article-48.html.xml'))
 
+    def test_validate_complete(self):
+        '''Check that an exception is raised if a document is invalid
+        '''
+        complete = etree.fromstring('<document/>')
+
+        self.assertRaises(converter.ConversionException,
+                          self.converter_inside_orig.validate_complete, complete)
 
 class XMLTester(unittest.TestCase):
     def assertXmlEqual(self, got, want):
@@ -370,27 +377,6 @@ Filbma lea.</p>
         self.assertXmlEqual(etree.tostring(got), etree.tostring(want))
 
 
-class TestPDFConverter(XMLTester):
-    def test_pdf_converter(self):
-        pdfdocument = converter.PDFConverter(
-            os.path.join(here, 'converter_data/pdf-test.pdf'))
-        got = pdfdocument.convert2intermediate()
-        want = etree.parse(
-            os.path.join(here, 'converter_data/pdf-test.xml'))
-
-        self.assertXmlEqual(etree.tostring(got), etree.tostring(want))
-
-    def test_skip_to_include(self):
-        c = converter.PDFConverter(
-            os.path.join(here, 'converter_data/pdf-test.pdf'))
-        self.assertEqual( c.skip_to_include("7"),
-                          [(1, 6), (8, 0)] )
-        self.assertEqual( c.skip_to_include("1-4,7,9-12"),
-                          [(5, 6), (8, 8), (13, 0)] )
-        self.assertEqual( c.skip_to_include("3-4,7,9-12"),
-                          [(1, 2), (5, 6), (8, 8), (13, 0)] )
-
-
 class TestDocConverter(XMLTester):
     def setUp(self):
         self.testdoc = converter.DocConverter(
@@ -410,6 +396,34 @@ class TestDocConverter(XMLTester):
         #'''
         #self.assertRaises(converter.ConversionException,
                           #converter.DocConverter, filename='bogus.doc')
+
+class TestDocxConverter(XMLTester):
+    def setUp(self):
+        self.testdoc = converter.DocxConverter(
+            os.path.join(here,
+                         'converter_data/doc-test.docx'), 'bogus')
+
+    def test_convert2intermediate(self):
+        got = self.testdoc.convert2intermediate()
+        want = (
+            '<document>'
+            '    <header>'
+            '        <title/>'
+            '    </header>'
+            '    <body>'
+            '        <p>–Mun lean njeallje jagi boaris.</p>'
+            '        <p>Nu beaivvádat.</p>'
+            '        <p>oahppat guovttejuvlla nalde sykkelastit.</p>'
+            '        <p>njeallje suorpma boaris.</p>'
+            '        <p>Olggobealde Áššu</p>'
+            '        <p>Lea go dus meahccebiila ?</p>'
+            '        <p>–Mii lea suohttaseamos geassebargu dus ?</p>'
+            '        <p>Suohkana bearašásodagaid juohkin</p>'
+            '        <p>Sámi kulturfestivála 1998</p>'
+            '    </body>'
+            '</document>')
+
+        self.assertXmlEqual(etree.tostring(got), want)
 
 
 class TestHTMLContentConverter(XMLTester):
@@ -599,9 +613,9 @@ class TestHTMLContentConverter(XMLTester):
             'ugga.html',
             content=content)
 
-        got, _ = hcc.get_encoding(content)
+        got = hcc.get_encoding(content)
 
-        self.assertEqual(got, 'utf-8')
+        self.assertEqual(got, ('utf-8', 'guess'))
 
     def test_set_charset_2(self):
         '''Check that default charset is set, 2
@@ -614,44 +628,45 @@ class TestHTMLContentConverter(XMLTester):
             'ugga.html',
             content=content)
 
-        got, _ = hcc.get_encoding(content)
+        got = hcc.get_encoding(content)
 
-        self.assertEqual(got, 'utf-8')
+        self.assertEqual(got, ('utf-8', 'guess'))
 
-    #def test_get_encoding_3(self):
-        #'''encoding_from_xsl = 'iso-8859-1', no charset in html header
-        #'''
-        #content = (
-            #'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Final//EN"><html>'
-            #'<body></body></html>')
-        #encoding_from_xsl = 'iso-8859-1'
+    def test_get_encoding_3(self):
+        '''encoding_from_xsl = 'iso-8859-1', no charset in html header
+        '''
+        content = (
+            '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Final//EN"><html>'
+            '<body></body></html>')
 
-        #hcc = converter.HTMLContentConverter(
-            #'ugga.html',
-            #content=content)
 
-        #got, _ = hcc.get_encoding(content)
+        hcc = converter.HTMLContentConverter(
+            'ugga.html',
+            content=content)
+        hcc.md.set_variable('text_encoding', 'iso-8859-1')
 
-        #self.assertEqual(got, 'windows-1252')
+        got = hcc.get_encoding(content)
 
-    #def test_get_encoding_4(self):
-        #'''Check that encoding_from_xsl overrides meta charset
-        #encoding_from_xsl = 'iso-8859-1', charset in html header = utf-8
-        #'''
-        #content = (
-            #'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Final//EN"><html>'
-            #'<head><meta http-equiv="Content-type" content="text/html; '
-            #'charset=utf-8"></head><body></body></html>')
+        self.assertEqual(got, ('windows-1252', 'xsl'))
 
-        #encoding_from_xsl = 'iso-8859-1'
+    def test_get_encoding_4(self):
+        '''Check that encoding_from_xsl overrides meta charset
+        encoding_from_xsl = 'iso-8859-1', charset in html header = utf-8
+        '''
+        content = (
+            '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Final//EN"><html>'
+            '<head><meta http-equiv="Content-type" content="text/html; '
+            'charset=utf-8"></head><body></body></html>')
 
-        #hcc = converter.HTMLContentConverter(
-            #'ugga.html',
-            #content=content)
 
-        #got, _ = hcc.get_encoding(content)
+        hcc = converter.HTMLContentConverter(
+            'ugga.html',
+            content=content)
+        hcc.md.set_variable('text_encoding', 'iso-8859-1')
 
-        #self.assertEqual(got, 'windows-1252')
+        got = hcc.get_encoding(content)
+
+        self.assertEqual(got, ('windows-1252', 'xsl'))
 
     def test_get_encoding_5(self):
         '''encoding_from_xsl = None, charset in html header = iso-8859-1
@@ -665,9 +680,9 @@ class TestHTMLContentConverter(XMLTester):
             'ugga.html',
             content=content)
 
-        got, _ = hcc.get_encoding(content)
+        got = hcc.get_encoding(content)
 
-        self.assertEqual(got, 'windows-1252')
+        self.assertEqual(got, ('windows-1252', 'content'))
 
     def test_get_encoding_6(self):
         '''encoding_from_xsl = '', charset in html header = iso-8859-1
@@ -681,9 +696,9 @@ class TestHTMLContentConverter(XMLTester):
             'ugga.html',
             content=content)
 
-        got, _ = hcc.get_encoding(content)
+        got = hcc.get_encoding(content)
 
-        self.assertEqual(got, 'windows-1252')
+        self.assertEqual(got, ('windows-1252', 'content'))
 
     def test_set_charset_7(self):
         '''Test if set_charset works with ' as quote mark around charset
@@ -698,9 +713,9 @@ class TestHTMLContentConverter(XMLTester):
             'ugga.html',
             content=content)
 
-        got, _ = hcc.get_encoding(content)
+        got = hcc.get_encoding(content)
 
-        self.assertEqual(got, 'windows-1252')
+        self.assertEqual(got, ('windows-1252', 'content'))
 
     def test_set_charset_8(self):
         '''Test if set_charset works with ' as quote mark around charset when
@@ -717,9 +732,9 @@ class TestHTMLContentConverter(XMLTester):
             'ugga.html',
             content=content)
 
-        got, _ = hcc.get_encoding(content)
+        got = hcc.get_encoding(content)
 
-        self.assertEqual(got, 'windows-1252')
+        self.assertEqual(got, ('windows-1252', 'content'))
 
     def test_set_charset_9(self):
         '''Test if set_charset works with " as quote mark around charset
@@ -736,9 +751,26 @@ class TestHTMLContentConverter(XMLTester):
             'ugga.html',
             content=content)
 
-        got, _ = hcc.get_encoding(content)
+        got = hcc.get_encoding(content)
 
-        self.assertEqual(got, 'windows-1252')
+        self.assertEqual(got, ('windows-1252', 'content'))
+
+    def test_set_charset_10(self):
+        '''Test uppercase iso-8859-15'''
+        content = (
+            '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w3.org/TR/REC-html40/loose.dtd">'
+            '<html>'
+            '<head>'
+            '<META HTTP-EQUIV="Content-Type" CONTENT="text/html;'
+            'charset=iso-8859-15">')
+
+        hcc = converter.HTMLContentConverter(
+            'ugga.html',
+            content=content)
+
+        got = hcc.get_encoding(content)
+
+        self.assertEqual(got, ('iso-8859-15', 'content'))
 
     def test_center2div(self):
         got = converter.HTMLContentConverter(
@@ -2551,7 +2583,7 @@ class TestXslMaker(XMLTester):
         xslmaker = converter.XslMaker(
             os.path.join(here,
                          'converter_data/samediggi-article-48.html.xsl'))
-        got = xslmaker.get_xsl()
+        got = xslmaker.xsl
 
         # The import href is different for each user testing, so just
         # check that it looks OK:
@@ -3427,7 +3459,7 @@ class TestPDF2XMLConverter(XMLTester):
         p2x.md.set_variable('left_margin', 'all=7')
         p2x.md.set_variable('top_margin', 'all=7')
         p2x.md.set_variable('bottom_margin', 'all=7')
-        p2x.set_margins()
+        p2x.parse_margin_lines()
         p2x.parse_pages(pdf2xml)
 
         self.assertXmlEqual(etree.tostring(p2x.get_body()), want)
@@ -3454,8 +3486,8 @@ class TestPDF2XMLConverter(XMLTester):
         p2x.md.set_variable('left_margin', 'all=7')
         p2x.md.set_variable('top_margin', 'all=7')
         p2x.md.set_variable('bottom_margin', 'all=7')
-        p2x.set_margins()
-        p2x.skip_pages = [1]
+        p2x.md.set_variable('skip_pages', '1')
+        p2x.parse_margin_lines()
         p2x.parse_pages(pdf2xml)
 
         self.assertXmlEqual(etree.tostring(p2x.get_body()), want)
@@ -3533,73 +3565,73 @@ class TestPDF2XMLConverter(XMLTester):
         '''
         p2x = converter.PDF2XMLConverter('bogus.xml')
 
-        self.assertEqual(p2x.set_margin('odd=230, even = 540 , 8 = 340'),
+        self.assertEqual(p2x.parse_margin_line('odd=230, even = 540 , 8 = 340'),
                          {'odd': 230, 'even': 540, '8': 340})
 
-    def test_set_margins1(self):
-        '''Test set_margins
+    def test_parse_margin_lines1(self):
+        '''Test parse_margin_lines
         '''
         p2x = converter.PDF2XMLConverter('bogus.pdf')
         p2x.md.set_variable('right_margin', 'odd=4,even=8,3=6')
         p2x.md.set_variable('left_margin', '7=7')
         p2x.md.set_variable('top_margin', '8=8')
         p2x.md.set_variable('bottom_margin', '9=2')
-        p2x.set_margins()
+        p2x.parse_margin_lines()
         self.assertEqual(p2x.margins, {
             'right_margin': {'odd': 4, 'even': 8, '3': 6},
             'left_margin': {'7': 7},
             'top_margin': {'8': 8},
             'bottom_margin': {'9': 2}})
 
-    def test_set_margins2(self):
+    def test_parse_margin_lines2(self):
         '''all and even in margin line should raise ConversionException
         '''
         p2x = converter.PDF2XMLConverter('bogus.pdf')
         p2x.md.set_variable('right_margin', 'all=40,even=80')
 
-        self.assertRaises(converter.ConversionException, p2x.set_margins)
+        self.assertRaises(converter.ConversionException, p2x.parse_margin_lines)
 
-    def test_set_margins3(self):
+    def test_parse_margin_lines3(self):
         '''all and odd in margin line should raise ConversionException
         '''
         p2x = converter.PDF2XMLConverter('bogus.pdf')
         p2x.md.set_variable('right_margin', 'all=40,odd=80')
 
-        self.assertRaises(converter.ConversionException, p2x.set_margins)
+        self.assertRaises(converter.ConversionException, p2x.parse_margin_lines)
 
-    def test_set_margins4(self):
+    def test_parse_margin_lines4(self):
         '''text after = should raise ConversionException
         '''
         p2x = converter.PDF2XMLConverter('bogus.pdf')
         p2x.md.set_variable('right_margin', 'all=tullball')
 
-        self.assertRaises(converter.ConversionException, p2x.set_margins)
+        self.assertRaises(converter.ConversionException, p2x.parse_margin_lines)
 
-    def test_set_margins5(self):
+    def test_parse_margin_lines5(self):
         '''no = should raise ConversionException
         '''
         p2x = converter.PDF2XMLConverter('bogus.pdf')
         p2x.md.set_variable('right_margin', 'all 50')
 
-        self.assertRaises(converter.ConversionException, p2x.set_margins)
+        self.assertRaises(converter.ConversionException, p2x.parse_margin_lines)
 
-    def test_set_margins6(self):
+    def test_parse_margin_lines6(self):
         '''line with no comma between values should raise ConversionException
         '''
         p2x = converter.PDF2XMLConverter('bogus.pdf')
         p2x.md.set_variable('right_margin', 'all=50 3')
 
-        self.assertRaises(converter.ConversionException, p2x.set_margins)
+        self.assertRaises(converter.ConversionException, p2x.parse_margin_lines)
 
     def test_compute_margins1(self):
-        '''Test set_margins
+        '''Test parse_margin_lines
         '''
         p2x = converter.PDF2XMLConverter('bogus.xml')
         p2x.md.set_variable('right_margin', 'odd=10,even=15,3=5')
         p2x.md.set_variable('left_margin', '7=5')
         p2x.md.set_variable('top_margin', '8=8')
         p2x.md.set_variable('bottom_margin', '9=20')
-        p2x.set_margins()
+        p2x.parse_margin_lines()
 
         page1 = etree.fromstring(
             '<page number="1" height="1263" width="862"/>')
@@ -3642,7 +3674,8 @@ class TestPDF2XMLConverter(XMLTester):
         '''Test a valid skip_pages line
         '''
         p2x = converter.PDF2XMLConverter('bogus.xml')
-        got = p2x.set_skip_pages('1, 4-5, 7')
+        p2x.md.set_variable('skip_pages', '1, 4-5, 7')
+        got = p2x.get_skip_pages()
         want = [1, 4, 5, 7]
 
         self.assertEqual(got, want)
@@ -3651,15 +3684,16 @@ class TestPDF2XMLConverter(XMLTester):
         '''Test an invalid skip_pages line
         '''
         p2x = converter.PDF2XMLConverter('bogus.xml')
+        p2x.md.set_variable('skip_pages', '1, 4 5, 7')
 
-        self.assertRaises(converter.ConversionException, p2x.set_skip_pages,
-                          '1, 4 5, 7')
+        self.assertRaises(converter.ConversionException, p2x.get_skip_pages)
 
     def test_set_skip_pages3(self):
         '''Test an empty skip_pages line
         '''
         p2x = converter.PDF2XMLConverter('bogus.xml')
-        got = p2x.set_skip_pages(' ')
+        p2x.md.set_variable('skip_pages', ' ')
+        got = p2x.get_skip_pages()
         want = []
 
         self.assertEqual(got, want)

@@ -23,6 +23,7 @@ import os
 import operator
 import inspect
 import platform
+import subprocess
 
 
 class SetupException(Exception):
@@ -52,6 +53,7 @@ def replace_all(replacements, string):
                   replacements,
                   string)
 
+
 def split_path(path):
     """
     Split an absolute path into useful components:
@@ -69,8 +71,6 @@ def split_path(path):
     l = lang_etc.split("/")
     lang, genre, subdirs, basename = l[0], l[1], l[2:-1], l[-1]
     return root, module, lang, genre, "/".join(subdirs), basename
-
-
 
 
 def is_executable(fullpath):
@@ -125,6 +125,7 @@ def get_preprocess_command(lang):
     return [preprocess_script,
             "--xml",
             "--abbr={}".format(abbr)]
+
 
 def lineno():
     """Returns the current line number in our program."""
@@ -190,3 +191,28 @@ def name_to_unicode(filename):
         return filename.decode('utf-8')
 
 
+class ExternalCommandRunner(object):
+    '''Class to run external command through subprocess
+
+    Save output, error and returnvalue
+    '''
+    def __init__(self):
+        self.stdout = None
+        self.stderr = None
+        self.returncode = None
+
+    def run(self, command, cwd=None, to_stdin=None):
+        '''Run the command, save the result
+        '''
+        try:
+            subp = subprocess.Popen(command,
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    cwd=cwd)
+        except OSError:
+            print('Please install {}'.format(command[0]))
+            raise
+
+        (self.stdout, self.stderr) = subp.communicate(to_stdin)
+        self.returncode = subp.returncode
