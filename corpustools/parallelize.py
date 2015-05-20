@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 #
@@ -395,7 +395,7 @@ class Parallelize:
     The other file is found via the metadata in the input file
     """
 
-    def __init__(self, origfile1, lang2, quiet=False):
+    def __init__(self, origfile1, lang2, use_hunalign=False, quiet=False):
         """
         Set the original file name, the lang of the original file and the
         language that it should parallellized with.
@@ -511,16 +511,10 @@ class Parallelize:
         """
         for pfile in self.origfiles:
             infile = os.path.join(pfile.get_name())
-            if os.path.exists(infile):
-                outfile = self.get_sent_filename(pfile)
-                divider = SentenceDivider(infile, pfile.get_lang())
-                divider.process_all_paragraphs()
-                divider.write_result(outfile)
-            else:
-                print >>sys.stderr, "{} doesn't exist".format(infile)
-                return 2
-
-        return 0
+            outfile = self.get_sent_filename(pfile)
+            divider = SentenceDivider(infile, pfile.get_lang())
+            divider.process_all_paragraphs()
+            divider.write_result(outfile)
 
     def get_sent_filename(self, pfile):
         """
@@ -875,7 +869,7 @@ class Tca2ToTmx(Tmx):
         pfile2_data = self.read_tca2_output(self.filelist[1])
 
         body = etree.SubElement(tmx, "body")
-        for line1, line2 in map(None, pfile1_data, pfile2_data):
+        for line1, line2 in zip(pfile1_data, pfile2_data):
             tu = self.make_tu(line1, line2)
             body.append(tu)
 
@@ -1088,33 +1082,33 @@ class TmxGoldstandardTester:
         xml_file = self.compute_xmlfilename(want_tmx_file)
 
         parallelizer = Parallelize(xml_file, paralang)
-        if parallelizer.divide_p_into_sentences() == 0:
-            if parallelizer.parallelize_files() == 0:
+        parallelizer.divide_p_into_sentences()
+        parallelizer.parallelize_files()
 
-                # The result of the alignment is a tmx element
-                filelist = parallelizer.get_filelist()
-                got_tmx = Tca2ToTmx(filelist)
+        # The result of the alignment is a tmx element
+        filelist = parallelizer.get_filelist()
+        got_tmx = Tca2ToTmx(filelist)
 
-                # This is the tmx element fetched from the goldstandard file
-                want_tmx = Tmx(etree.parse(want_tmx_file))
+        # This is the tmx element fetched from the goldstandard file
+        want_tmx = Tmx(etree.parse(want_tmx_file))
 
-                # Instantiate a comparator with the two tmxes
-                comparator = TmxComparator(want_tmx, got_tmx)
+        # Instantiate a comparator with the two tmxes
+        comparator = TmxComparator(want_tmx, got_tmx)
 
-                # Make a file_element for our results file
-                file_element = self.testresult_writer.make_file_element(
-                    filelist[0].get_basename(),
-                    str(comparator.get_lines_in_wantedfile()),
-                    str(comparator.get_number_of_differing_lines()))
+        # Make a file_element for our results file
+        file_element = self.testresult_writer.make_file_element(
+            filelist[0].get_basename(),
+            str(comparator.get_lines_in_wantedfile()),
+            str(comparator.get_number_of_differing_lines()))
 
-                self.set_number_of_diff_lines(
-                    comparator.get_number_of_differing_lines())
+        self.set_number_of_diff_lines(
+            comparator.get_number_of_differing_lines())
 
-                # Append the result for this file to the testrun element
-                testrun.append(file_element)
+        # Append the result for this file to the testrun element
+        testrun.append(file_element)
 
-                self.write_diff_files(comparator, parallelizer,
-                                      filelist[0].get_basename())
+        self.write_diff_files(comparator, parallelizer,
+                                filelist[0].get_basename())
 
     def compute_xmlfilename(self, want_tmx_file):
         """
@@ -1253,6 +1247,9 @@ def parse_options():
     parser.add_argument('-q', '--quiet',
                         help="Don't mention anything out of the ordinary.",
                         action="store_true")
+    parser.add_argument('-a', '--aligner',
+                        dest='aligner'
+                        help="Either hunalign or tca2 (the default).")
     parser.add_argument('-p', '--parallel_language',
                         dest='parallel_language',
                         help="The language to parallelize the input "
@@ -1267,9 +1264,10 @@ def main():
     args = parse_options()
 
     try:
-        parallelizer = Parallelize(args.input_file,
-                                   args.parallel_language,
-                                   args.quiet)
+        parallelizer = Parallelize(origfile1 = args.input_file,
+                                   lang2 = args.parallel_language,
+                                   aligner = args.aligner,
+                                   quiet = args.quiet)
     except IOError as e:
         print e.message
         sys.exit(1)
@@ -1285,19 +1283,19 @@ def main():
     if not args.quiet:
         print "Aligning {} and its parallel file".format(args.input_file)
         print "Adding sentence structure that tca2 needs …"
-    if parallelizer.divide_p_into_sentences() == 0:
-        if not args.quiet:
-            print "Aligning files …"
-        if parallelizer.parallelize_files() == 0:
-            tmx = Tca2ToTmx(parallelizer.get_filelist())
+    parallelizer.divide_p_into_sentences()
+    if not args.quiet:
+        print "Aligning files …"
+    if parallelizer.parallelize_files() == 0:
+        tmx = Tca2ToTmx(parallelizer.get_filelist())
 
-            o_path, o_file = os.path.split(outfile)
-            o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
-            try:
-                os.makedirs(o_rel_path)
-            except OSError, e:
-                if e.errno != errno.EEXIST:
-                    raise
-            if not args.quiet:
-                print "Generating the tmx file {}".format(outfile)
-            tmx.write_tmx_file(outfile)
+        o_path, o_file = os.path.split(outfile)
+        o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
+        try:
+            os.makedirs(o_rel_path)
+        except OSError, e:
+            if e.errno != errno.EEXIST:
+                raise
+        if not args.quiet:
+            print "Generating the tmx file {}".format(outfile)
+        tmx.write_tmx_file(outfile)

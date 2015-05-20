@@ -447,7 +447,7 @@ class TestParallelize(unittest.TestCase):
                          "tmp/aarseth2-n.htmnob_sent.xml"))
 
     def test_divide_p_into_sentences(self):
-        self.assertEqual(self.parallelize.divide_p_into_sentences(), 0)
+        self.parallelize.divide_p_into_sentences()
 
     def test_parallize_files(self):
         self.assertEqual(self.parallelize.parallelize_files(), 0)
