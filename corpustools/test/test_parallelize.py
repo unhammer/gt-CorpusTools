@@ -442,15 +442,15 @@ class TestParallelize(unittest.TestCase):
     def test_get_sent_filename(self):
         self.assertEqual(
             self.parallelize.get_sent_filename(
-                self.parallelize.get_filelist()[0]),
+                self.parallelize.get_origfiles()[0]),
             os.path.join(os.environ['GTFREE'],
                          "tmp/aarseth2-n.htmnob_sent.xml"))
 
     def test_divide_p_into_sentences(self):
         self.parallelize.divide_p_into_sentences()
 
-    def test_parallize_files(self):
-        self.assertEqual(self.parallelize.parallelize_files(), 0)
+    def test_parallize_files_tca2(self):
+        print self.parallelize.parallelize_files(aligner='tca2')
 
     def test_generate_anchor_file(self):
         self.assertEqual(self.parallelize.generate_anchor_file(),
@@ -622,7 +622,8 @@ class TestTca2ToTmx(unittest.TestCase):
             "nob")
 
         self.para = para
-        self.tmx = parallelize.Tca2ToTmx(para.get_filelist())
+        self.tmx = parallelize.Tca2ToTmx(para.get_origfiles(),
+                                         para.get_sentfiles())
 
     def assertXmlEqual(self, got, want):
         """

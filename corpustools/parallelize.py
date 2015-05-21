@@ -385,7 +385,6 @@ class SentenceDivider:
 
         return s
 
-
 class Parallelize:
     """
     A class to parallelize two files
@@ -395,7 +394,7 @@ class Parallelize:
     The other file is found via the metadata in the input file
     """
 
-    def __init__(self, origfile1, lang2, use_hunalign=False, quiet=False):
+    def __init__(self, origfile1, lang2, quiet=False):
         """
         Set the original file name, the lang of the original file and the
         language that it should parallellized with.
@@ -461,7 +460,10 @@ class Parallelize:
 
         return os.path.join(out_dirname, out_filename)
 
-    def get_filelist(self):
+    def get_sentfiles(self):
+        return map(self.get_sent_filename, self.get_origfiles())
+
+    def get_origfiles(self):
         """
         Return the list of (the two) files that are aligned
         """
@@ -526,7 +528,53 @@ class Parallelize:
                             '{}{}_sent.xml'.format(
                                 origfilename, pfile.get_lang()))
 
-    def parallelize_files(self):
+    def parallelize_files(self, aligner):
+        """
+        Parallelize two files
+        """
+        if not self.quiet:
+            print "Adding sentence structure for the aligner …"
+        self.divide_p_into_sentences()
+
+        if not self.quiet:
+            print "Aligning files …"
+        if aligner == "tca2":
+            return self.parallelize_tca2()
+        elif aligner == "hunalign":
+            return self.parallelize_hunalign()
+        else:
+            raise Exception("ERROR: Unknown aligner {}".format(aligner))
+
+    def parallelize_tca2(self):
+        """
+        Parallelize two files using tca2
+        """
+        anchor_name = self.generate_anchor_file()
+
+        command = ['hunalign',
+                   '-realign',
+                   anchor_name,
+                   self.get_sent_filename(self.get_origfiles()[0]),
+                   self.get_sent_filename(self.get_origfiles()[1]),
+        ]
+        if not self.quiet:
+            print "Running {}".format(" ".join(command))
+        subp = subprocess.Popen(command,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        (output, error) = subp.communicate()
+
+        if subp.returncode != 0:
+            raise Exception(
+                'Could not parallelize {} and {} into sentences\n{}\n\n{}\n'.format(
+                    self.get_sent_filename(self.get_origfiles()[0]),
+                    self.get_sent_filename(self.get_origfiles()[1]),
+                    output, error))
+
+        tmx = HunalignToTmx(self.get_origfiles(), self.get_sentfiles())
+        return tmx
+
+    def parallelize_tca2(self):
         """
         Parallelize two files using tca2
         """
@@ -541,10 +589,8 @@ class Parallelize:
                    tca2_jar,
                    '-cli',
                    '-anchor={}'.format(anchor_name),
-                   '-in1={}'.format(self.get_sent_filename(
-                       self.get_filelist()[0])),
-                   '-in2={}'.format(self.get_sent_filename(
-                       self.get_filelist()[1]))]
+                   '-in1={}'.format(self.get_sent_filename(self.get_origfiles()[0])),
+                   '-in2={}'.format(self.get_sent_filename(self.get_origfiles()[1]))]
         if not self.quiet:
             print "Running tca2 aligner ..."
         subp = subprocess.Popen(command,
@@ -553,15 +599,14 @@ class Parallelize:
         (output, error) = subp.communicate()
 
         if subp.returncode != 0:
-            print >>sys.stderr, (
-                'Could not parallelize {} and {} into sentences'
-                '\n{}\n'
-                '\n{}\n'.format(
-                    self.get_sent_filename(self.get_filelist()[0]),
-                    self.get_sent_filename(self.get_filelist()[1]),
+            raise Exception(
+                'Could not parallelize {} and {} into sentences\n{}\n\n{}\n'.format(
+                    self.get_sent_filename(self.get_origfiles()[0]),
+                    self.get_sent_filename(self.get_origfiles()[1]),
                     output, error))
 
-        return subp.returncode
+        tmx = Tca2ToTmx(self.get_origfiles(), self.get_sentfiles())
+        return tmx
 
 
 class Tmx:
@@ -802,12 +847,13 @@ class Tca2ToTmx(Tmx):
     """
     A class to make tmx files based on the output from tca2
     """
-    def __init__(self, filelist):
+    def __init__(self, origfiles, sentfiles):
         """
         Input is a list of CorpusXMLFile objects
         """
-        self.filelist = filelist
-        Tmx.__init__(self, self.set_tmx())
+        self.origfiles = origfiles
+        self.sentfiles = sentfiles
+        Tmx.__init__(self, self.tca2_to_tmx())
 
     def make_tu(self, line1, line2):
         """
@@ -815,8 +861,8 @@ class Tca2ToTmx(Tmx):
         """
         tu = etree.Element("tu")
 
-        tu.append(self.make_tuv(line1, self.filelist[0].get_lang()))
-        tu.append(self.make_tuv(line2, self.filelist[1].get_lang()))
+        tu.append(self.make_tuv(line1, self.origfiles[0].get_lang()))
+        tu.append(self.make_tuv(line2, self.origfiles[1].get_lang()))
 
         return tu
 
@@ -857,16 +903,16 @@ class Tca2ToTmx(Tmx):
 
         return line
 
-    def set_tmx(self):
+    def tca2_to_tmx(self):
         """
         Make tmx file based on the two output files of tca2
         """
         tmx = etree.Element("tmx")
-        header = self.make_tmx_header(self.filelist[0].get_lang())
+        header = self.make_tmx_header(self.origfiles[0].get_lang())
         tmx.append(header)
 
-        pfile1_data = self.read_tca2_output(self.filelist[0])
-        pfile2_data = self.read_tca2_output(self.filelist[1])
+        pfile1_data = self.read_tca2_output(self.sentfiles[0])
+        pfile2_data = self.read_tca2_output(self.sentfiles[1])
 
         body = etree.SubElement(tmx, "body")
         for line1, line2 in zip(pfile1_data, pfile2_data):
@@ -875,25 +921,16 @@ class Tca2ToTmx(Tmx):
 
         return tmx
 
-    def read_tca2_output(self, pfile):
+    def read_tca2_output(self, sentfile):
         """
         Read the output of tca2
         Input is a CorpusXMLFile
         """
-        pfile_name = self.get_sent_filename(pfile).replace('.xml', '_new.txt')
+        sentfile_name = sentfile.replace('.xml', '_new.txt')
 
-        with open(pfile_name, "r") as tca2_output:
+        with open(sentfile_name, "r") as tca2_output:
             return tca2_output.read().decode('utf-8').split('\n')
 
-    def get_sent_filename(self, pfile):
-        """
-        Compute a name for the corpus-analyze output and tca2 input file
-        Input is a CorpusXMLFile
-        """
-        origfilename = pfile.get_basename_noext()
-        return (os.path.join(
-            os.environ['GTFREE'], 'tmp',
-            '{}{}_sent.xml'.format(origfilename, pfile.get_lang())))
 
 
 class TmxComparator:
@@ -1061,7 +1098,7 @@ class TmxGoldstandardTester:
                 paralang = 'nob'
 
             # Align files
-            self.align_files(testrun, want_tmx_file, paralang)
+            self.align_files(testrun, want_tmx_file, paralang, aligner="tca2")
 
         # All files have been tested, insert this run at the top of the
         # paragstest element
@@ -1069,7 +1106,7 @@ class TmxGoldstandardTester:
         # Write data to file
         self.testresult_writer.write_paragstesting_data()
 
-    def align_files(self, testrun, want_tmx_file, paralang):
+    def align_files(self, testrun, want_tmx_file, paralang, aligner):
         """
         Align files
         Compare the tmx's of the result of this parallellization and
@@ -1082,12 +1119,7 @@ class TmxGoldstandardTester:
         xml_file = self.compute_xmlfilename(want_tmx_file)
 
         parallelizer = Parallelize(xml_file, paralang)
-        parallelizer.divide_p_into_sentences()
-        parallelizer.parallelize_files()
-
-        # The result of the alignment is a tmx element
-        filelist = parallelizer.get_filelist()
-        got_tmx = Tca2ToTmx(filelist)
+        got_tmx = parallelizer.parallelize_files(aligner)
 
         # This is the tmx element fetched from the goldstandard file
         want_tmx = Tmx(etree.parse(want_tmx_file))
@@ -1248,7 +1280,7 @@ def parse_options():
                         help="Don't mention anything out of the ordinary.",
                         action="store_true")
     parser.add_argument('-a', '--aligner',
-                        dest='aligner'
+                        dest='aligner',
                         help="Either hunalign or tca2 (the default).")
     parser.add_argument('-p', '--parallel_language',
                         dest='parallel_language',
@@ -1266,7 +1298,6 @@ def main():
     try:
         parallelizer = Parallelize(origfile1 = args.input_file,
                                    lang2 = args.parallel_language,
-                                   aligner = args.aligner,
                                    quiet = args.quiet)
     except IOError as e:
         print e.message
@@ -1282,20 +1313,15 @@ def main():
 
     if not args.quiet:
         print "Aligning {} and its parallel file".format(args.input_file)
-        print "Adding sentence structure that tca2 needs …"
-    parallelizer.divide_p_into_sentences()
-    if not args.quiet:
-        print "Aligning files …"
-    if parallelizer.parallelize_files() == 0:
-        tmx = Tca2ToTmx(parallelizer.get_filelist())
+    tmx = parallelizer.parallelize_files(args.aligner)
 
-        o_path, o_file = os.path.split(outfile)
-        o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
-        try:
-            os.makedirs(o_rel_path)
-        except OSError, e:
-            if e.errno != errno.EEXIST:
-                raise
-        if not args.quiet:
-            print "Generating the tmx file {}".format(outfile)
-        tmx.write_tmx_file(outfile)
+    o_path, o_file = os.path.split(outfile)
+    o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
+    try:
+        os.makedirs(o_rel_path)
+    except OSError, e:
+        if e.errno != errno.EEXIST:
+            raise
+    if not args.quiet:
+        print "Generating the tmx file {}".format(outfile)
+    tmx.write_tmx_file(outfile)
