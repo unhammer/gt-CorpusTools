@@ -945,6 +945,38 @@ class AlignmentToTmx(Tmx):
             'You have to subclass and override parse_alignment_results')
 
 
+class HunalignToTmx(AlignmentToTmx):
+    """
+    A class to make tmx files based on the output from hunalign
+    """
+    def __init__(self, origfiles, output):
+        """
+        Input is a list of CorpusXMLFile objects
+        """
+        self.output = output
+        self.threshold = 0.0
+        super(HunalignToTmx, self).__init__(origfiles)
+
+    def parse_alignment_results(self):
+        """
+        Return parsed output files of tca2
+        """
+        pairs = [l.split("\t")
+                 for l in output.split("\n")
+                 if float(l[2]) > self.threshold]
+        src_lines = [self.clean_line(l[0])
+                     for l in pairs]
+        trg_lines = [self.clean_line(l[1])
+                     for l in pairs]
+        return src_lines, trg_lines
+
+    multi_sep = re.compile(r' *~~~ *')
+    def clean_line(self, line):
+        """
+        Remove the ~~~ occuring in multi-sentence alignments
+        """
+        return multi_sep.sub(' ', line)
+
 class Tca2ToTmx(AlignmentToTmx):
     """
     A class to make tmx files based on the output from tca2
@@ -975,12 +1007,12 @@ class Tca2ToTmx(AlignmentToTmx):
             return map(self.remove_s_tag,
                        tca2_output.read().decode('utf-8').split('\n'))
 
+    sregex = re.compile('<s id="[^ ]*">')
     def remove_s_tag(self, line):
         """
         Remove the s tags that tca2 has added
         """
         line = line.replace('</s>', '')
-        sregex = re.compile('<s id="[^ ]*">')
         line = sregex.sub('', line)
         return line
 
