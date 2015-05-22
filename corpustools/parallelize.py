@@ -256,14 +256,16 @@ class SentenceDivider:
     def process_all_paragraphs(self):
         """Go through all paragraphs in the etree and process them one by one.
         """
-        self.document = etree.Element('document')
-        body = etree.Element('body')
-        self.document.append(body)
+        if not self.document:
+            self.document = etree.Element('document')
+            body = etree.Element('body')
+            self.document.append(body)
 
-        elts_doc_lang = filter(self.in_main_lang,
-                             self.input_etree.findall('//p'))
-        processed = self.process_elts(elts_doc_lang)
-        body.extend(processed)
+            elts_doc_lang = filter(self.in_main_lang,
+                                self.input_etree.findall('//p'))
+            processed = self.process_elts(elts_doc_lang)
+            body.extend(processed)
+        return self.document
 
     def process_elts(self, elts):
         para_texts = ("".join(elt.xpath('.//text()'))
@@ -522,7 +524,6 @@ class Parallelize(object):
         """
         if not self.quiet:
             print "Adding sentence structure for the aligner …"
-        self.divide_p_into_sentences()
 
         if not self.quiet:
             print "Aligning files …"
@@ -566,10 +567,12 @@ class ParallelizeHunalign(Parallelize):
                           if w1 and w2]
         return "\n".join([w1+" @ "+w2 for w1, w2 in expanded_pairs])
 
-    def to_sents(self, pfile):
-        xmlsents = open(self.get_sentfiles(pfile)).read()
-        return xmlsents
-
+    def to_sents(self, origfile):
+        divider = SentenceDivider(pfile.get_name())
+        doc = divider.process_all_paragraphs()
+        paragraphs = etree.ElementTree(doc).xpath('//p')
+        sents = [["<p>"]+p.xpath('./s/text()') for p paragraphs]
+        return "\n".join(sum([], sents))
 
     def align(self):
         """
@@ -612,6 +615,8 @@ class ParallelizeTCA2(Parallelize):
         """
         Parallelize two files using tca2
         """
+        self.divide_p_into_sentences()
+
         tca2_jar = os.path.join(here, 'tca2/dist/lib/alignment.jar')
         # util.sanity_check([tca2_script])
 
