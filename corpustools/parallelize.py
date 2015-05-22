@@ -571,7 +571,7 @@ class ParallelizeHunalign(Parallelize):
         divider = SentenceDivider(pfile.get_name())
         doc = divider.process_all_paragraphs()
         paragraphs = etree.ElementTree(doc).xpath('//p')
-        sents = [["<p>"]+p.xpath('./s/text()') for p paragraphs]
+        sents = [["<p>"]+p.xpath('./s/text()') for p in paragraphs]
         return "\n".join(sum([], sents))
 
     def align(self):
@@ -637,7 +637,7 @@ class ParallelizeTCA2(Parallelize):
         return tmx
 
 
-class Tmx:
+class Tmx(object):
     """
     A class that reads a tmx file, and implements a bare minimum of
     functionality to be able to compare two tmx's.
@@ -871,17 +871,19 @@ class Tmx:
         return True
 
 
-class Tca2ToTmx(Tmx):
+class AlignmentToTmx(Tmx):
     """
-    A class to make tmx files based on the output from tca2
+    A class to make tmx files based on the output of an aligner
+
+    This just implements some common methods for the TCA2 and hunalign
+    subclasses.
     """
-    def __init__(self, origfiles, sentfiles):
+    def __init__(self, origfiles):
         """
         Input is a list of CorpusXMLFile objects
         """
         self.origfiles = origfiles
-        self.sentfiles = sentfiles
-        Tmx.__init__(self, self.tca2_to_tmx())
+        super(AlignmentToTmx, self).__init__(self.make_tmx())
 
     def make_tu(self, line1, line2):
         """
@@ -901,7 +903,7 @@ class Tca2ToTmx(Tmx):
         tuv = etree.Element("tuv")
         tuv.attrib["{http://www.w3.org/XML/1998/namespace}lang"] = lang
         seg = etree.Element("seg")
-        seg.text = self.remove_s_tag(line).strip()
+        seg.text = line.strip()
         tuv.append(seg)
 
         return tuv
@@ -921,26 +923,15 @@ class Tca2ToTmx(Tmx):
 
         return header
 
-    def remove_s_tag(self, line):
+    def make_tmx(self):
         """
-        Remove the s tags that tca2 has added
-        """
-        line = line.replace('</s>', '')
-        sregex = re.compile('<s id="[^ ]*">')
-        line = sregex.sub('', line)
-
-        return line
-
-    def tca2_to_tmx(self):
-        """
-        Make tmx file based on the two output files of tca2
+        Make tmx file based on the output of the aligner
         """
         tmx = etree.Element("tmx")
         header = self.make_tmx_header(self.origfiles[0].get_lang())
         tmx.append(header)
 
-        pfile1_data = self.read_tca2_output(self.sentfiles[0])
-        pfile2_data = self.read_tca2_output(self.sentfiles[1])
+        pfile1_data, pfile2_data = self.parse_alignment_results()
 
         body = etree.SubElement(tmx, "body")
         for line1, line2 in zip(pfile1_data, pfile2_data):
@@ -948,6 +939,30 @@ class Tca2ToTmx(Tmx):
             body.append(tu)
 
         return tmx
+
+    def parse_alignment_results(self):
+        raise NotImplementedError(
+            'You have to subclass and override parse_alignment_results')
+
+
+class Tca2ToTmx(AlignmentToTmx):
+    """
+    A class to make tmx files based on the output from tca2
+    """
+    def __init__(self, origfiles, sentfiles):
+        """
+        Input is a list of CorpusXMLFile objects
+        """
+        self.sentfiles = sentfiles
+        super(Tca2ToTmx, self).__init__(origfiles)
+
+    def parse_alignment_results(self):
+        """
+        Return parsed output files of tca2
+        """
+        pfile1_data = self.read_tca2_output(self.sentfiles[0])
+        pfile2_data = self.read_tca2_output(self.sentfiles[1])
+        return pfile1_data, pfile2_data
 
     def read_tca2_output(self, sentfile):
         """
@@ -957,8 +972,17 @@ class Tca2ToTmx(Tmx):
         sentfile_name = sentfile.replace('.xml', '_new.txt')
 
         with open(sentfile_name, "r") as tca2_output:
-            return tca2_output.read().decode('utf-8').split('\n')
+            return map(self.remove_s_tag,
+                       tca2_output.read().decode('utf-8').split('\n'))
 
+    def remove_s_tag(self, line):
+        """
+        Remove the s tags that tca2 has added
+        """
+        line = line.replace('</s>', '')
+        sregex = re.compile('<s id="[^ ]*">')
+        line = sregex.sub('', line)
+        return line
 
 
 class TmxComparator:
