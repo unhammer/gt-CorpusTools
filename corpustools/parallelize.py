@@ -385,7 +385,7 @@ class SentenceDivider:
 
         return s
 
-class Parallelize:
+class Parallelize(object):
     """
     A class to parallelize two files
     Input is the xml file that should be parallellized and the language that it
@@ -492,21 +492,6 @@ class Parallelize:
         else:
             return False
 
-    def generate_anchor_file(self):
-        """
-        Generate an anchor file with lang1 and lang2. Return the path
-        to the anchor file
-        """
-
-        gal = generate_anchor_list.GenerateAnchorList(
-            self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
-        gal.generate_file([
-            os.path.join(os.environ['GTHOME'], 'gt/common/src/anchor.txt')],
-                          quiet=self.quiet)
-
-        # Return the absolute path of the resulting file
-        return os.path.abspath(gal.get_outfile())
-
     def divide_p_into_sentences(self):
         """
         Tokenize the text in the given file and reassemble it again
@@ -538,25 +523,12 @@ class Parallelize:
 
         if not self.quiet:
             print "Aligning files …"
-        if aligner == "tca2":
-            return self.parallelize_tca2()
-        elif aligner == "hunalign":
-            return self.parallelize_hunalign()
-        else:
-            raise Exception("ERROR: Unknown aligner {}".format(aligner))
+        self.align()
 
-    def parallelize_tca2(self):
+    def run_command(self, command):
         """
-        Parallelize two files using tca2
+        Run a parallelize command and return its output
         """
-        anchor_name = self.generate_anchor_file()
-
-        command = ['hunalign',
-                   '-realign',
-                   anchor_name,
-                   self.get_sent_filename(self.get_origfiles()[0]),
-                   self.get_sent_filename(self.get_origfiles()[1]),
-        ]
         if not self.quiet:
             print "Running {}".format(" ".join(command))
         subp = subprocess.Popen(command,
@@ -571,10 +543,56 @@ class Parallelize:
                     self.get_sent_filename(self.get_origfiles()[1]),
                     output, error))
 
+        return output
+
+    def align(self):
+        raise NotImplementedError('You have to subclass and override align')
+
+
+class ParallelizeHunalign(Parallelize):
+    def __init__(self, **args):
+        super(ParallelizeHunalign, self).__init__(**args)
+
+    def self.make_dict_file():
+        return "TODO"
+
+    def align(self):
+        """
+        Parallelize two files using hunalign
+        """
+        dict_name = self.make_dict_file()
+
+        command = ['hunalign',
+                   '-realign',
+                   dict_name,
+                   self.get_sent_filename(self.get_origfiles()[0]),
+                   self.get_sent_filename(self.get_origfiles()[1]),
+        ]
+        output = self.run_command(command)
+
         tmx = HunalignToTmx(self.get_origfiles(), self.get_sentfiles())
         return tmx
 
-    def parallelize_tca2(self):
+class ParallelizeTCA2(Parallelize):
+    def __init__(self, **args):
+        super(ParallelizeTCA2, self).__init__(**args)
+
+    def generate_anchor_file(self):
+        """
+        Generate an anchor file with lang1 and lang2. Return the path
+        to the anchor file
+        """
+
+        gal = generate_anchor_list.GenerateAnchorList(
+            self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
+        gal.generate_file([
+            os.path.join(os.environ['GTHOME'], 'gt/common/src/anchor.txt')],
+                          quiet=self.quiet)
+
+        # Return the absolute path of the resulting file
+        return os.path.abspath(gal.get_outfile())
+
+    def align(self):
         """
         Parallelize two files using tca2
         """
@@ -591,19 +609,8 @@ class Parallelize:
                    '-anchor={}'.format(anchor_name),
                    '-in1={}'.format(self.get_sent_filename(self.get_origfiles()[0])),
                    '-in2={}'.format(self.get_sent_filename(self.get_origfiles()[1]))]
-        if not self.quiet:
-            print "Running tca2 aligner ..."
-        subp = subprocess.Popen(command,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-        (output, error) = subp.communicate()
-
-        if subp.returncode != 0:
-            raise Exception(
-                'Could not parallelize {} and {} into sentences\n{}\n\n{}\n'.format(
-                    self.get_sent_filename(self.get_origfiles()[0]),
-                    self.get_sent_filename(self.get_origfiles()[1]),
-                    output, error))
+        output = self.run_command(command)
+        # Ignore output, Tca2ToTmx guesses name of output-files from sentfiles
 
         tmx = Tca2ToTmx(self.get_origfiles(), self.get_sentfiles())
         return tmx
@@ -1281,6 +1288,7 @@ def parse_options():
                         action="store_true")
     parser.add_argument('-a', '--aligner',
                         dest='aligner',
+                        default='tca2',
                         help="Either hunalign or tca2 (the default).")
     parser.add_argument('-p', '--parallel_language',
                         dest='parallel_language',
@@ -1296,9 +1304,18 @@ def main():
     args = parse_options()
 
     try:
-        parallelizer = Parallelize(origfile1 = args.input_file,
-                                   lang2 = args.parallel_language,
-                                   quiet = args.quiet)
+        if args.aligner == "hunalign":
+            parallelizer = ParallelizeHunalign(origfile1 = args.input_file,
+                                               lang2 = args.parallel_language,
+                                               quiet = args.quiet)
+        elif args.aligner == "tca2":
+            parallelizer = ParallelizeTCA2(origfile1 = args.input_file,
+                                           lang2 = args.parallel_language,
+                                           quiet = args.quiet)
+        else:
+            print >>sys.stderr, "Unknown aligner argument {}".format(args.aligner)
+            sys.exit(1)
+
     except IOError as e:
         print e.message
         sys.exit(1)
