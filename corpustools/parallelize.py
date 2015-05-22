@@ -419,8 +419,8 @@ class Parallelize(object):
             self.reshuffle_files()
 
         self.quiet = quiet
-        self.anchor_sources = os.path.join(os.environ['GTHOME'],
-                                           'gt/common/src/anchor.txt')
+        self.anchor_sources = [os.path.join(os.environ['GTHOME'],
+                                            'gt/common/src/anchor.txt')]
 
     def consistency_check(self, f0, f1):
         """
@@ -566,24 +566,32 @@ class ParallelizeHunalign(Parallelize):
                           if w1 and w2]
         return "\n".join([w1+" @ "+w2 for w1, w2 in expanded_pairs])
 
+    def to_sents(self, pfile):
+        xmlsents = open(self.get_sentfiles(pfile)).read()
+        return xmlsents
+
+
     def align(self):
         """
         Parallelize two files using hunalign
         """
-        with tempfile.NamedTemporaryFile('w') as dict_f:
+        def tmp():
+            return tempfile.NamedTemporaryFile('w')
+        with tmp(), tmp(), tmp() as dict_f, sent1_f, sent2_f:
             dict_f.write(self.make_dict())
+            sent0_f.write(self.to_sents(self.get_origfiles()[0]))
+            sent1_f.write(self.to_sents(self.get_origfiles()[1]))
 
-        command = ['hunalign',
-                   '-utf',
-                   '-realign',
-                   '-text',
-                   dict_f.name,
-                   self.get_sent_filename(self.get_origfiles()[0]),
-                   self.get_sent_filename(self.get_origfiles()[1]),
-        ]
-        output, error = self.run_command(command)
+            command = ['hunalign',
+                    '-utf',
+                    '-realign',
+                    '-text',
+                    dict_f.name,
+                    sent0_f, sent1_f,
+            ]
+            output, error = self.run_command(command)
 
-        tmx = HunalignToTmx(self.get_origfiles(), self.get_sentfiles())
+        tmx = HunalignToTmx(self.get_origfiles(), output)
         return tmx
 
 class ParallelizeTCA2(Parallelize):
