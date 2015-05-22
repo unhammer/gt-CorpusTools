@@ -975,7 +975,7 @@ class HunalignToTmx(AlignmentToTmx):
         """
         Remove the ~~~ occuring in multi-sentence alignments
         """
-        return multi_sep.sub(' ', line)
+        return self.multi_sep.sub(' ', line)
 
 class Tca2ToTmx(AlignmentToTmx):
     """
@@ -1013,7 +1013,7 @@ class Tca2ToTmx(AlignmentToTmx):
         Remove the s tags that tca2 has added
         """
         line = line.replace('</s>', '')
-        line = sregex.sub('', line)
+        line = self.sregex.sub('', line)
         return line
 
 
