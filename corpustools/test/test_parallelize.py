@@ -22,9 +22,11 @@ from lxml import etree
 from lxml import doctestcompare
 import os
 import doctest
+import tempfile
 
 from corpustools import parallelize
 from corpustools import text_cat
+from corpustools import generate_anchor_list
 
 
 here = os.path.dirname(__file__)
@@ -411,11 +413,12 @@ class TestParallelize(unittest.TestCase):
     A test class for the Parallelize class
     """
     def setUp(self):
-        self.parallelize = parallelize.Parallelize(
+        self.parallelize = parallelize.ParallelizeTCA2(
             os.path.join(
                 os.environ['GTFREE'],
                 'prestable/converted/sme/facta/skuvlahistorja2/'
-                'aarseth2-s.htm.xml'), "nob")
+                'aarseth2-s.htm.xml'),
+            "nob")
 
     def test_orig_path(self):
         self.assertEqual(
@@ -449,13 +452,26 @@ class TestParallelize(unittest.TestCase):
     def test_divide_p_into_sentences(self):
         self.parallelize.divide_p_into_sentences()
 
-    def test_parallize_files_tca2(self):
-        print self.parallelize.parallelize_files(aligner='tca2')
+    def test_parallize_files(self):
+        print self.parallelize.parallelize_files()
 
     def test_generate_anchor_file(self):
         self.assertEqual(self.parallelize.generate_anchor_file(),
                          os.path.join(os.environ['GTFREE'],
                                       'anchor-nobsme.txt'))
+
+class TestGenerateAnchorFile(unittest.TestCase):
+    """
+    A test class for the GenerateAnchorList class
+    """
+    def test_generate_anchor_output(self):
+        tmpdir = tempfile.mkdtemp()
+        gal = generate_anchor_list.GenerateAnchorList('nob', 'sme', tmpdir)
+        gal.generate_file([os.path.join(here, 'parallelize_data/anchor.txt')],
+                          quiet=True)
+        want = open(os.path.join(here, 'parallelize_data/anchor-nobsme.txt')).read()
+        got = open(os.path.join(tmpdir, 'anchor-nobsme.txt')).read()
+        self.assertEqual(got, want)
 
 
 class TestTmx(unittest.TestCase):

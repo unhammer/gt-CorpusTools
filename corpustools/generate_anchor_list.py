@@ -33,43 +33,50 @@ class GenerateAnchorList(object):
     def __init__(self, lang1, lang2, outdir):
         self.lang1 = lang1
         self.lang2 = lang2
+        self.lang1_index = self.LANGUAGES.index(self.lang1)
+        self.lang2_index = self.LANGUAGES.index(self.lang2)
         self.outfile = os.path.join(outdir,
                                     'anchor-{}{}.txt'.format(lang1, lang2))
 
     def get_outfile(self):
         return self.outfile
 
+    def words_of_line(self, lineno, line):
+        """Either a word-pair or None, if no word-pair on that line."""
+        line = line.strip()
+        if (not line.startswith('#') or not
+                line.startswith('&')):
+            words = line.split('/')
+            if len(words) == len(self.LANGUAGES):
+                word1 = words[self.lang1_index].strip()
+                word2 = words[self.lang2_index].strip()
+                if len(word1) > 0 and len(word2) > 0:
+                    return word1, word2
+            else:
+                print >>sys.stderr, (
+                    'Invalid line at {} in {}'.format(lineno, infile))
+
+    def read_anchors(self, infiles, quiet=False):
+        """List of word-pairs in infiles, empty/bad lines skipped."""
+        out = []
+        for infile in infiles:
+            with open(infile) as f:
+                if not quiet:
+                    print 'Reading {}'.format(infile)
+                out += [self.words_of_line(i,l) for i,l
+                        in enumerate(f.readlines())]
+        return filter(None, out)
+
     def generate_file(self, infiles, quiet=False):
-        '''infiles is a list of files
+        '''infiles is a list of file paths
         '''
-        lang1_index = self.LANGUAGES.index(self.lang1)
-        lang2_index = self.LANGUAGES.index(self.lang2)
+        anchors = self.read_anchors(infiles, quiet)
 
         with open(self.outfile, 'wb') as outfile:
             if not quiet:
                 print 'Generating anchor word list to {}'.format(self.outfile)
-
-            for infile in infiles:
-                with open(infile) as instream:
-                    if not quiet:
-                        print 'Reading {}'.format(infile)
-                    lineno = 0
-                    for line in instream:
-                        lineno += 1
-                        line = line.strip()
-                        if (not line.startswith('#') or not
-                                line.startswith('&')):
-                            words = line.split('/')
-                            if len(words) == len(self.LANGUAGES):
-                                word1 = words[lang1_index].strip()
-                                word2 = words[lang2_index].strip()
-                                if len(word1) > 0 and len(word2) > 0:
-                                    print >>outfile, '{} / {}'.format(word1,
-                                                                      word2)
-                            else:
-                                print >>sys.stderr, (
-                                    'Invalid line at {} in {}'.format(lineno,
-                                                                      infile))
+            print >>outfile, "\n".join("{} / {}".format(w1, w2)
+                                       for w1,w2 in anchors)
 
 
 def parse_options():

@@ -38,6 +38,7 @@ import text_cat
 import argparse_version
 import util
 import generate_anchor_list
+import tempfile
 
 
 here = os.path.dirname(__file__)
@@ -418,6 +419,8 @@ class Parallelize(object):
             self.reshuffle_files()
 
         self.quiet = quiet
+        self.anchor_sources = os.path.join(os.environ['GTHOME'],
+                                           'gt/common/src/anchor.txt')
 
     def consistency_check(self, f0, f1):
         """
@@ -513,7 +516,7 @@ class Parallelize(object):
                             '{}{}_sent.xml'.format(
                                 origfilename, pfile.get_lang()))
 
-    def parallelize_files(self, aligner):
+    def parallelize_files(self):
         """
         Parallelize two files
         """
@@ -543,40 +546,47 @@ class Parallelize(object):
                     self.get_sent_filename(self.get_origfiles()[1]),
                     output, error))
 
-        return output
+        return output, error
 
     def align(self):
         raise NotImplementedError('You have to subclass and override align')
 
 
 class ParallelizeHunalign(Parallelize):
-    def __init__(self, **args):
-        super(ParallelizeHunalign, self).__init__(**args)
-
-    def self.make_dict_file():
-        return "TODO"
+    def make_dict():
+        gal = generate_anchor_list.GenerateAnchorList(
+            self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
+        words_pairs = gal.read_anchors(self.anchor_sources, quiet=self.quiet)
+        # turn [("foo, bar", "fie")] into [("foo", "fie"), ("bar", "fie")]:
+        split_on = re.compile(r' *, *')
+        expanded_pairs= [ (w1,w2)
+                          for w1s, w2s in words_pairs
+                          for w1 in re.split(split_on, w1s)
+                          for w2 in re.split(split_on, w2s)
+                          if w1 and w2]
+        return "\n".join([w1+" @ "+w2 for w1, w2 in expanded_pairs])
 
     def align(self):
         """
         Parallelize two files using hunalign
         """
-        dict_name = self.make_dict_file()
+        with tempfile.NamedTemporaryFile('w') as dict_f:
+            dict_f.write(self.make_dict())
 
         command = ['hunalign',
+                   '-utf',
                    '-realign',
-                   dict_name,
+                   '-text',
+                   dict_f.name,
                    self.get_sent_filename(self.get_origfiles()[0]),
                    self.get_sent_filename(self.get_origfiles()[1]),
         ]
-        output = self.run_command(command)
+        output, error = self.run_command(command)
 
         tmx = HunalignToTmx(self.get_origfiles(), self.get_sentfiles())
         return tmx
 
 class ParallelizeTCA2(Parallelize):
-    def __init__(self, **args):
-        super(ParallelizeTCA2, self).__init__(**args)
-
     def generate_anchor_file(self):
         """
         Generate an anchor file with lang1 and lang2. Return the path
@@ -585,9 +595,7 @@ class ParallelizeTCA2(Parallelize):
 
         gal = generate_anchor_list.GenerateAnchorList(
             self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
-        gal.generate_file([
-            os.path.join(os.environ['GTHOME'], 'gt/common/src/anchor.txt')],
-                          quiet=self.quiet)
+        gal.generate_file(self.anchor_sources, quiet=self.quiet)
 
         # Return the absolute path of the resulting file
         return os.path.abspath(gal.get_outfile())
@@ -609,7 +617,7 @@ class ParallelizeTCA2(Parallelize):
                    '-anchor={}'.format(anchor_name),
                    '-in1={}'.format(self.get_sent_filename(self.get_origfiles()[0])),
                    '-in2={}'.format(self.get_sent_filename(self.get_origfiles()[1]))]
-        output = self.run_command(command)
+        output, error = self.run_command(command)
         # Ignore output, Tca2ToTmx guesses name of output-files from sentfiles
 
         tmx = Tca2ToTmx(self.get_origfiles(), self.get_sentfiles())
