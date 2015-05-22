@@ -41,7 +41,7 @@ class GenerateAnchorList(object):
     def get_outfile(self):
         return self.outfile
 
-    def words_of_line(self, lineno, line):
+    def words_of_line(self, lineno, line, infile):
         """Either a word-pair or None, if no word-pair on that line."""
         line = line.strip()
         if (not line.startswith('#') or not
@@ -63,7 +63,7 @@ class GenerateAnchorList(object):
             with open(infile) as f:
                 if not quiet:
                     print 'Reading {}'.format(infile)
-                out += [self.words_of_line(i,l) for i,l
+                out += [self.words_of_line(i, l, infile) for i,l
                         in enumerate(f.readlines())]
         return filter(None, out)
 
