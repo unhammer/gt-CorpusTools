@@ -223,11 +223,11 @@ class SentenceDivider:
     into sentences, but otherwise is unchanged.
     Each sentence is encased in an s tag, and has an id number
     """
-    def __init__(self, input_xmlfile, parallel_lang):
+    def __init__(self, input_xmlfile):
         """Parse the input_xmlfile, set doc_lang to lang and read typos from
         the corresponding .typos file if it exists
         """
-        self.set_up_input_file(input_xmlfile, parallel_lang)
+        self.set_up_input_file(input_xmlfile)
         self.sentence_counter = 0
         self.typos = {}
 
@@ -236,7 +236,7 @@ class SentenceDivider:
             t = typosfile.Typos(input_xmlfile.replace('.xml', '.typos'))
             self.typos.update(t.get_typos())
 
-    def set_up_input_file(self, input_xmlfile, parallel_lang):
+    def set_up_input_file(self, input_xmlfile):
         """
         Initialize the inputfile, skip those parts that are meant to be
         skipped, move <later> elements.
@@ -502,7 +502,7 @@ class Parallelize(object):
         for pfile in self.origfiles:
             infile = os.path.join(pfile.get_name())
             outfile = self.get_sent_filename(pfile)
-            divider = SentenceDivider(infile, pfile.get_lang())
+            divider = SentenceDivider(infile)
             divider.process_all_paragraphs()
             divider.write_result(outfile)
 

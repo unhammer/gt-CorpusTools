@@ -158,7 +158,7 @@ class TestSentenceDivider(unittest.TestCase):
         self.sentence_divider = parallelize.SentenceDivider(
             os.path.join(
                 here,
-                "parallelize_data/finnmarkkulahka_web_lettere.pdf.xml"), "nob")
+                "parallelize_data/finnmarkkulahka_web_lettere.pdf.xml"))
 
     def assertXmlEqual(self, got, want):
         """
