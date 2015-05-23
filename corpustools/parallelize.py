@@ -1204,7 +1204,7 @@ class TmxGoldstandardTester:
         xml_file = self.compute_xmlfilename(want_tmx_file)
 
         parallelizer = Parallelize(xml_file, paralang)
-        got_tmx = parallelizer.parallelize_files(aligner)
+        got_tmx = parallelizer.parallelize_files()
 
         # This is the tmx element fetched from the goldstandard file
         want_tmx = Tmx(etree.parse(want_tmx_file))
@@ -1408,7 +1408,7 @@ def main():
 
     if not args.quiet:
         print "Aligning {} and its parallel file".format(args.input_file)
-    tmx = parallelizer.parallelize_files(args.aligner)
+    tmx = parallelizer.parallelize_files()
 
     o_path, o_file = os.path.split(outfile)
     o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
