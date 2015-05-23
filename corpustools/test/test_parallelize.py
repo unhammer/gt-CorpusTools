@@ -659,7 +659,8 @@ class TestTca2ToTmx(unittest.TestCase):
         line1 = '<s id="1">ubba gubba.</s> <s id="2">ibba gibba.</s>'
         line2 = '<s id="1">abba gabba.</s> <s id="2">ebba gebba.</s>'
 
-        got_tu = self.tmx.make_tu(line1, line2)
+        got_tu = self.tmx.make_tu(self.tmx.remove_s_tag(line1),
+                                  self.tmx.remove_s_tag(line2))
 
         want_tu = etree.XML(
             '<tu><tuv xml:lang="nob"><seg>ubba gubba. ibba gibba.</seg>'
@@ -671,7 +672,7 @@ class TestTca2ToTmx(unittest.TestCase):
     def test_make_tuv(self):
         line = '<s id="1">ubba gubba.</s> <s id="2">ibba gibba.</s>'
         lang = 'smi'
-        got_tuv = self.tmx.make_tuv(line, lang)
+        got_tuv = self.tmx.make_tuv(self.tmx.remove_s_tag(line), lang)
 
         want_tuv = etree.XML(
             '<tuv xml:lang="smi"><seg>ubba gubba. ibba gibba.</seg></tuv>')
