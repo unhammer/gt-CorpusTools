@@ -524,11 +524,8 @@ class Parallelize(object):
         Parallelize two files
         """
         if not self.quiet:
-            print "Adding sentence structure for the aligner …"
-
-        if not self.quiet:
             print "Aligning files …"
-        self.align()
+        return self.align()
 
     def run_command(self, command):
         """
@@ -616,6 +613,8 @@ class ParallelizeTCA2(Parallelize):
         """
         Parallelize two files using tca2
         """
+        if not self.quiet:
+            print "Adding sentence structure for the aligner …"
         self.divide_p_into_sentences()
 
         tca2_jar = os.path.join(here, 'tca2/dist/lib/alignment.jar')
