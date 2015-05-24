@@ -20,6 +20,8 @@
 #   Copyright 2015 Børre Gaup <borre.gaup@uit.no>
 #
 
+from __future__ import unicode_literals
+
 import os
 import sys
 import argparse
@@ -63,8 +65,8 @@ class GenerateAnchorList(object):
             with open(infile) as f:
                 if not quiet:
                     print 'Reading {}'.format(infile)
-                out += [self.words_of_line(i, l, infile) for i,l
-                        in enumerate(f.readlines())]
+                out += [self.words_of_line(i, l.decode('utf-8'), infile)
+                        for i,l in enumerate(f.readlines())]
         return filter(None, out)
 
     def generate_file(self, infiles, quiet=False):
@@ -75,8 +77,9 @@ class GenerateAnchorList(object):
         with open(self.outfile, 'wb') as outfile:
             if not quiet:
                 print 'Generating anchor word list to {}'.format(self.outfile)
-            print >>outfile, "\n".join("{} / {}".format(w1, w2)
-                                       for w1,w2 in anchors)
+            out = "\n".join("{} / {}".format(w1, w2)
+                            for w1,w2 in anchors)
+            print >>outfile, out.encode('utf-8')
 
 
 def parse_options():

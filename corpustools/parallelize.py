@@ -257,7 +257,7 @@ class SentenceDivider:
     def process_all_paragraphs(self):
         """Go through all paragraphs in the etree and process them one by one.
         """
-        if not self.document:
+        if self.document is None:
             self.document = etree.Element('document')
             body = etree.Element('body')
             self.document.append(body)
@@ -552,7 +552,7 @@ class Parallelize(object):
 
 
 class ParallelizeHunalign(Parallelize):
-    def make_dict():
+    def make_dict(self):
         gal = generate_anchor_list.GenerateAnchorList(
             self.get_lang1(), self.get_lang2(), os.environ['GTFREE'])
         words_pairs = gal.read_anchors(self.anchor_sources, quiet=self.quiet)
@@ -566,11 +566,11 @@ class ParallelizeHunalign(Parallelize):
         return "\n".join([w1+" @ "+w2 for w1, w2 in expanded_pairs])
 
     def to_sents(self, origfile):
-        divider = SentenceDivider(pfile.get_name())
+        divider = SentenceDivider(origfile.get_name())
         doc = divider.process_all_paragraphs()
         paragraphs = etree.ElementTree(doc).xpath('//p')
         sents = [["<p>"]+p.xpath('./s/text()') for p in paragraphs]
-        return "\n".join(sum([], sents))
+        return "\n".join(sum(sents, []))
 
     def align(self):
         """
@@ -578,21 +578,21 @@ class ParallelizeHunalign(Parallelize):
         """
         def tmp():
             return tempfile.NamedTemporaryFile('w')
-        with tmp(), tmp(), tmp() as dict_f, sent1_f, sent2_f:
-            dict_f.write(self.make_dict())
-            sent0_f.write(self.to_sents(self.get_origfiles()[0]))
-            sent1_f.write(self.to_sents(self.get_origfiles()[1]))
+        with tmp() as dict_f, tmp() as sent0_f, tmp() as sent1_f:
+            dict_f.write(self.make_dict().encode('utf-8'))
+            sent0_f.write(self.to_sents(self.get_origfiles()[0]).encode('utf-8'))
+            sent1_f.write(self.to_sents(self.get_origfiles()[1]).encode('utf-8'))
 
             command = ['hunalign',
-                    '-utf',
-                    '-realign',
-                    '-text',
-                    dict_f.name,
-                    sent0_f, sent1_f,
+                       '-utf',
+                       '-realign',
+                       '-text',
+                       dict_f.name,
+                       sent0_f.name, sent1_f.name,
             ]
             output, error = self.run_command(command)
 
-        tmx = HunalignToTmx(self.get_origfiles(), output)
+        tmx = HunalignToTmx(self.get_origfiles(), output.decode('utf-8'))
         return tmx
 
 class ParallelizeTCA2(Parallelize):
@@ -961,9 +961,13 @@ class HunalignToTmx(AlignmentToTmx):
         """
         Return parsed output files of tca2
         """
-        pairs = [l.split("\t")
-                 for l in output.split("\n")
-                 if float(l[2]) > self.threshold]
+        pairs = [line.split("\t")
+                 for line in self.output.split("\n")
+                 if line]
+        pairs = [l for l in pairs
+                 if len(l) == 3
+                 and l[2] > self.threshold]
+        # TODO: skip the <p> lines
         src_lines = [self.clean_line(l[0])
                      for l in pairs]
         trg_lines = [self.clean_line(l[1])
