@@ -525,7 +525,7 @@ class Parallelize(object):
         Parallelize two files
         """
         if not self.quiet:
-            print "Aligning files …"
+            note("Aligning files …")
         return self.align()
 
     def run_command(self, command):
@@ -533,7 +533,7 @@ class Parallelize(object):
         Run a parallelize command and return its output
         """
         if not self.quiet:
-            print "Running {}".format(" ".join(command))
+            note("Running {}".format(" ".join(command)))
         subp = subprocess.Popen(command,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
@@ -615,7 +615,7 @@ class ParallelizeTCA2(Parallelize):
         Parallelize two files using tca2
         """
         if not self.quiet:
-            print "Adding sentence structure for the aligner …"
+            note("Adding sentence structure for the aligner …")
         self.divide_p_into_sentences()
 
         tca2_jar = os.path.join(here, 'tca2/dist/lib/alignment.jar')
@@ -837,7 +837,6 @@ class Tmx(object):
                                     encoding="utf-8",
                                     xml_declaration=True)
             tmx_file.write(string)
-            print "Wrote {}".format(out_filename)
 
     def remove_tu_with_empty_seg(self):
         """Remove tu elements that contain empty seg element
@@ -1087,7 +1086,7 @@ class TmxTestDataWriter():
             tree = etree.parse(filename)
             self.set_parags_testing_element(tree.getroot())
         except IOError, error:
-            print "I/O error({0}): {1}".format(error.errno, error.strerror)
+            note("I/O error({0}): {1}".format(error.errno, error.strerror))
             sys.exit(1)
 
     def get_filename(self):
@@ -1410,9 +1409,11 @@ def main():
 
     if args.output_file is None:
         outfile = parallelizer.get_outfile_name()
+    elif args.output_file == "-":
+        outfile = "/dev/stdout"
     else:
         outfile = args.output_file
-    if os.path.exists(outfile):
+    if outfile != "/dev/stdout" and os.path.exists(outfile):
         if args.force:
             note("{} already exists, overwriting!".format(outfile))
         else:
@@ -1420,9 +1421,11 @@ def main():
             sys.exit(1)
 
     if not args.quiet:
-        print "Aligning {} and its parallel file".format(args.input_file)
+        note("Aligning {} and its parallel file".format(args.input_file))
     tmx = parallelizer.parallelize_files()
 
     if not args.quiet:
-        print "Generating the tmx file {}".format(outfile)
+        note("Generating the tmx file {}".format(outfile))
     tmx.write_tmx_file(outfile)
+    if not args.quiet:
+        note("Wrote {}".format(outfile))

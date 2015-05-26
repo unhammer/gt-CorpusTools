@@ -28,6 +28,8 @@ import argparse
 
 import argparse_version
 
+def note(msg):
+    print >>sys.stderr, msg.encode('utf-8')
 
 class GenerateAnchorList(object):
     LANGUAGES = ['eng', 'nob', 'sme', 'fin', 'smj', 'sma']
@@ -64,7 +66,7 @@ class GenerateAnchorList(object):
         for infile in infiles:
             with open(infile) as f:
                 if not quiet:
-                    print 'Reading {}'.format(infile)
+                    note('Reading {}'.format(infile))
                 out += [self.words_of_line(i, l.decode('utf-8'), infile)
                         for i,l in enumerate(f.readlines())]
         return filter(None, out)
@@ -76,7 +78,7 @@ class GenerateAnchorList(object):
 
         with open(self.outfile, 'wb') as outfile:
             if not quiet:
-                print 'Generating anchor word list to {}'.format(self.outfile)
+                note('Generating anchor word list to {}'.format(self.outfile))
             out = "\n".join("{} / {}".format(w1, w2)
                             for w1,w2 in anchors)
             print >>outfile, out.encode('utf-8')
