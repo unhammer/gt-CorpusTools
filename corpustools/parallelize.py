@@ -281,7 +281,8 @@ class SentenceDivider:
         o_path, o_file = os.path.split(outfile)
         o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
         try:
-            os.makedirs(o_rel_path)
+            if o_rel_path != '':
+                os.makedirs(o_rel_path)
         except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
@@ -320,7 +321,7 @@ class SentenceDivider:
             preprocess_input.encode('utf-8'))
 
         if subp.returncode != 0:
-            print >>sys.stderr, 'Could not divide into sentences'
+            note('ERROR: Could not divide into sentences')
             print >>sys.stderr, output
             print >>sys.stderr, error
             sys.exit()
@@ -826,10 +827,9 @@ class Tmx(object):
         """
         Write a tmx file given a tmx etree element and a filename
         """
-        try:
-            os.makedirs(os.path.dirname(out_filename))
-        except OSError:
-            pass
+        out_dir = os.path.dirname(out_filename)
+        if out_dir != '' and not os.path.isdir(out_dir):
+            os.makedirs(out_dir)
 
         with open(out_filename, "w") as tmx_file:
             string = etree.tostring(self.get_tmx(),
@@ -1276,7 +1276,7 @@ class TmxGoldstandardTester:
         (output, error) = subp.communicate()
 
         if subp.returncode != 0:
-            print >>sys.stderr, 'Error when searching for goldstandard docs'
+            note('ERROR: When searching for goldstandard docs:')
             print >>sys.stderr, error
             sys.exit(1)
         else:
@@ -1345,7 +1345,7 @@ class Toktmx2Tmx:
         (output, error) = subp.communicate()
 
         if subp.returncode != 0:
-            print >>sys.stderr, 'Error when searching for toktmx docs'
+            note('ERROR: When searching for toktmx docs:')
             print >>sys.stderr, error
             sys.exit(1)
         else:
@@ -1359,7 +1359,13 @@ def parse_options():
         description='Sentence align two files. Input is the document \
         containing the main language, and language to parallelize it with.')
 
-    parser.add_argument('input_file', help="The input file")
+    parser.add_argument('input_file',
+                        help="The input filename")
+    parser.add_argument('output_file',
+                        help="Optionally an output filename. Defaults to "
+                        "toktmx/{LANGA}2{LANGB}/{GENRE}/…/{BASENAME}.toktmx",
+                        default=None,
+                        nargs='?')
     parser.add_argument('-f', '--force',
                         help="Overwrite output file if it already exists."
                         "The default is to skip parallelizing existing files.",
@@ -1394,32 +1400,29 @@ def main():
                                            lang2 = args.parallel_language,
                                            quiet = args.quiet)
         else:
-            print >>sys.stderr, "Unknown aligner argument {}".format(args.aligner)
+            note("ERROR: Unknown aligner argument {}, expecting one of: tca2, hunalign"
+                 .format(args.aligner))
             sys.exit(1)
 
     except IOError as e:
         print e.message
         sys.exit(1)
 
-    outfile = parallelizer.get_outfile_name()
+    if args.output_file is None:
+        outfile = parallelizer.get_outfile_name()
+    else:
+        outfile = args.output_file
     if os.path.exists(outfile):
         if args.force:
-            print "{} already exists, overwriting!".format(outfile)
+            note("{} already exists, overwriting!".format(outfile))
         else:
-            print "{} already exists, skipping ...".format(outfile)
+            note("{} already exists, skipping ...".format(outfile))
             sys.exit(1)
 
     if not args.quiet:
         print "Aligning {} and its parallel file".format(args.input_file)
     tmx = parallelizer.parallelize_files()
 
-    o_path, o_file = os.path.split(outfile)
-    o_rel_path = o_path.replace(os.getcwd()+'/', '', 1)
-    try:
-        os.makedirs(o_rel_path)
-    except OSError, e:
-        if e.errno != errno.EEXIST:
-            raise
     if not args.quiet:
         print "Generating the tmx file {}".format(outfile)
     tmx.write_tmx_file(outfile)
