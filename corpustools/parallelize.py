@@ -963,15 +963,20 @@ class HunalignToTmx(AlignmentToTmx):
         pairs = [line.split("\t")
                  for line in self.output.split("\n")
                  if line]
-        pairs = [l for l in pairs
-                 if len(l) == 3
-                 and l[2] > self.threshold]
-        # TODO: skip the <p> lines
+        pairs = filter(self.is_good_line,
+                       pairs)
+
         src_lines = [self.clean_line(l[0])
                      for l in pairs]
         trg_lines = [self.clean_line(l[1])
                      for l in pairs]
         return src_lines, trg_lines
+
+    def is_good_line(self, l):
+        return (len(l) == 3 and
+                l[0] != "<p>" and
+                l[1] != "<p>" and
+                l[2] > self.threshold)
 
     multi_sep = re.compile(r' *~~~ *')
     def clean_line(self, line):
